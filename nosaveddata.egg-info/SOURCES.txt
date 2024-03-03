@@ -1,3 +1,4 @@
+README.md
 setup.py
 nosaveddata/__init__.py
 nosaveddata.egg-info/PKG-INFO
@@ -9,6 +10,7 @@ nosaveddata.egg-info/top_level.txt
 nosaveddata/builders/__init__.py
 nosaveddata/builders/cfc.py
 nosaveddata/builders/mlp.py
+nosaveddata/builders/moe.py
 nosaveddata/builders/resnet.py
 nosaveddata/builders/token_learner.py
 nosaveddata/builders/transformer.py
@@ -26,4 +28,6 @@ nosaveddata/nsd_utils/__init__.py
 nosaveddata/nsd_utils/bbf.py
 nosaveddata/nsd_utils/cv.py
 nosaveddata/nsd_utils/dreamer.py
+nosaveddata/nsd_utils/einstein.py
 nosaveddata/nsd_utils/networks.py
+nosaveddata/nsd_utils/temperature.py

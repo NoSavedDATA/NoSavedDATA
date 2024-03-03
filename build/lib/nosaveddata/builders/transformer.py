@@ -246,8 +246,8 @@ class GPT_Block(nn.Module):
 
 
 class GPT_Transformer(nn.Module):
-    def __init__(self, d_model, nhead,
-                 num_blks=1, dropout = 0.1, use_bias=False, seq_len = 128, bias=False, report_params_count=True,
+    def __init__(self, d_model, num_blks, nhead, seq_len,
+                 dropout = 0.1, use_bias=False, bias=False, report_params_count=True,
                  ffn_mult=4):
         super().__init__()
         self.num_hiddens = d_model
@@ -302,7 +302,7 @@ class GPT_Transformer(nn.Module):
 
 
 class GPT_NLP(nn.Module):
-    def __init__(self, hiddens=512, nhead=8, num_blks=8, seq_len=128, vocab_size=50257, temperature=1.0, k=20, p=0.9, sampling='gpt', report_params_count=True, tied_weights=True):
+    def __init__(self, hiddens, num_blks, nhead, seq_len, vocab_size=50257, temperature=1.0, k=20, p=0.9, sampling='gpt', report_params_count=True, tied_weights=True):
         super().__init__()
         self.vocab_size = vocab_size
         self.embed_dim = hiddens
@@ -358,8 +358,8 @@ class CrossAttention_Block(nn.Module):
 
 
 class CrossAttention_Transformer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=2048,  
-                 num_blks=1, dropout = 0.1, use_bias=False, vocab_size = 0, seq_len = 128, bias=False):
+    def __init__(self, d_model, num_blks, nhead, seq_len, dim_feedforward=2048,  
+                 dropout = 0.1, use_bias=False, vocab_size = 0, bias=False):
         super().__init__()
         self.num_hiddens = d_model
 
@@ -411,6 +411,7 @@ class CrossAttention_Transformer(nn.Module):
         return q
     
     
+
 
 
 class SpatialNorm(nn.Module):

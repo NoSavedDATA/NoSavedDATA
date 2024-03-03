@@ -1,72 +1,35 @@
 # REFERENCES
-# https://github.com/rish-16/tokenlearner-pytorch/blob/main/tokenlearner_pytorch/tokenlearner_pytorch.py
+
+# https://github.com/google-research/scenic/blob/main/scenic/projects/token_learner/model.py
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .weight_init import init_cnn
-
-class SpatialAttention(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(2, 1, kernel_size=(1,1), stride=1),
-            nn.BatchNorm2d(1),
-            nn.GELU()
-        ).to('cuda')
-        
-        self.sgap = nn.AvgPool2d(2).to('cuda')
-        self.conv.apply(init_cnn)
-        
-    def forward(self, x):
-        B, H, W, C = x.shape
-        x = x.contiguous().view(B, C, H, W)
-        
-        mx = torch.max(x, 1)[0].unsqueeze(1)
-        avg = torch.mean(x, 1).unsqueeze(1)
-        combined = torch.cat([mx, avg], dim=1)
-        fmap = self.conv(combined)
-        weight_map = torch.sigmoid(fmap) * x
-        out = (weight_map).mean(dim=(-2, -1))
-        
-        return out, weight_map
+from ..nsd_utils.networks import params_count
+from .weight_init import *
 
 
 class TokenLearner(nn.Module):
-    def __init__(self, S) -> None:
+    def __init__(self, in_channels, S, layers=3) -> None:
         super().__init__()
-        self.S = S
-        self.tokenizers = nn.ModuleList([SpatialAttention() for _ in range(S)]).to('cuda')
         
-    def forward(self, x):
-        B, _, _, C = x.shape
-        Z = torch.Tensor(B, self.S, C).to(x.device)
-        for i in range(self.S):
-            Ai, _ = self.tokenizers[i](x) # [B, C]
-            Z[:, i, :] = Ai
-        return Z
-
-
-class TokenFuser(nn.Module):
-    def __init__(self, H, W, C, S) -> None:
-        super().__init__()
-        self.projection = nn.Linear(S, S, bias=False)
-        self.Bi = nn.Linear(C, S)
-        self.spatial_attn = SpatialAttention()
-        self.S = S
+        self.attention = nn.Sequential(nn.Conv2d(in_channels, S, 3, 1, 1, bias=False),
+                                       *[nn.SiLU(), nn.Conv2d(S, S, 3, 1, 1, bias=False)]*(layers),
+                                       nn.Sigmoid())
         
-    def forward(self, y, x):
-        B, S, C = y.shape
-        B, H, W, C = x.shape
+        self.attention.apply(init_xavier)
+        params_count(self, 'Token Learner')
         
-        Y = self.projection(y.view(B, C, S)).view(B, S, C)
-        Bw = torch.sigmoid(self.Bi(x)).view(B, H*W, S) # [B, HW, S]
-        BwY = torch.matmul(Bw, Y)
         
-        _, xj = self.spatial_attn(x)
-        xj = xj.view(B, H*W, C)
+    def forward(self, X):
+        # Input shape:  (B, C, H, W)
+        # Output shape: (B, S, C)
+        B, C, _, _ = X.shape
         
-        out = (BwY + xj).view(B, H, W, C)
+        attn_w = self.attention(X).flatten(-2,-1)[...,None]
         
-        return out 
+        X = X.view(B, C, -1).transpose(-2,-1)[:,None]
+        X = (X*attn_w).mean(2)
+        
+        return X

@@ -1,4 +1,8 @@
-import os, cv2
+import os, cv2, re
+
+
+def extract_frame_number(filename):
+    return int(re.search(r'\d+', filename).group())
 
 def video_from_image_folder(image_folder, output_video_path, fps=30):
     #print(f"{image_folder}")
@@ -12,6 +16,9 @@ def video_from_image_folder(image_folder, output_video_path, fps=30):
 
     video = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
     #print(f"{video}")
+
+    images = sorted(images, key=extract_frame_number)
+    
     for image in images:
         img_path = os.path.join(image_folder, image)
         frame = cv2.imread(img_path)
@@ -21,7 +28,7 @@ def video_from_image_folder(image_folder, output_video_path, fps=30):
     video.release()
 
 
-def frames_from_video(video_path, output_path, startframe=0):
+def frames_from_video(video_path, output_path, startframe=0, one_every=1):
     video = cv2.VideoCapture(video_path)
 
     frame_count = 0
@@ -35,7 +42,8 @@ def frames_from_video(video_path, output_path, startframe=0):
             # Process the frame (e.g., display, save)
 
             # Save the frame as an image
-            cv2.imwrite(f"{output_path}/frame_{frame_count}.jpg", frame)
+            if (frame_count%one_every)==0:
+                cv2.imwrite(f"{output_path}/frame_{frame_count}.jpg", frame)
 
         frame_count += 1
     video.release()

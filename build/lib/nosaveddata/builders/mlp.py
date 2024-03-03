@@ -41,7 +41,13 @@ class MLP(nn.Module):
 
         
         self.init_weights()
-        
+
+    def turn_off_grads(self):
+        for layer in self.mlp:
+            if hasattr(layer, 'weight'):
+                layer.weight.requires_grad=False
+            if hasattr(layer, 'bias'):
+                layer.bias.requires_grad=False
     def init_weights(self):
         self.mlp.apply(self.init)
         self.mlp[-2].apply(self.last_init)
@@ -56,7 +62,7 @@ class MLP(nn.Module):
 class MLP_LayerNorm(nn.Module):
     def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
                  init=init_relu, in_act=nn.SiLU(), out_act=nn.Identity(),
-                 ln_eps=1e-3, last_init=init_relu, add_last_norm=False, bias=True):
+                 ln_eps=1e-3, last_init=init_relu, add_last_norm=True, bias=True):
         super().__init__()
         # Special MLP with custom options for non last layer and last layer Linears.
 

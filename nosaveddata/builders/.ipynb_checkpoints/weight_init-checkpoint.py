@@ -28,7 +28,7 @@ def init_xavier(module):
             
 def init_xavier_normal(module):
     if type(module) in (nn.Linear, nn.Conv2d, nn.Conv1d, nn.Conv3d):
-        nn.init.xavier_uniform_(module.weight, gain=1)
+        nn.init.xavier_normal_(module.weight, gain=1)
 
         if module.bias is not None:
             nn.init.zeros_(module.bias)
@@ -47,13 +47,11 @@ def init_sigmoid(module):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
-def init_deep_lstm(module):
-    # Ref: Sequence to Sequence Learning with Neural Networks
+def init_lecun(module):
     if type(module) in (nn.Linear, nn.Conv2d, nn.Conv1d, nn.Conv3d):
-        nn.init.uniform_(module.weight, -0.08, 0.08)
+        nn.init.normal_(module.weight, mean=0.0, std=1.0 / (module.weight.shape[1])**0.5)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
-
 
 def init_tanh(module):
     #print(f"The init tanh was only tested by the package's author at the CfC.")
@@ -62,9 +60,15 @@ def init_tanh(module):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
+def init_deep_lstm(module):
+    # Ref: Sequence to Sequence Learning with Neural Networks
+    if type(module) in (nn.Linear, nn.Conv2d, nn.Conv1d, nn.Conv3d):
+        nn.init.uniform_(module.weight, -0.08, 0.08)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
 
 def init_alphastar_special(module):
-    # Ref: alphastar
+    # Ref: Alphastar
     if isinstance(module, nn.Linear):
         torch.nn.init.normal_(module.weight, mean=0.0, std=0.005)
         #torch.nn.init.xavier_normal_(module.weight)
