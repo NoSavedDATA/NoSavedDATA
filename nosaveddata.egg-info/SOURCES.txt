@@ -19,11 +19,14 @@ nosaveddata/builders/unet.py
 nosaveddata/builders/unet_conditional.py
 nosaveddata/builders/unet_temporal.py
 nosaveddata/builders/unet_temporal_controlnet.py
+nosaveddata/builders/vit.py
 nosaveddata/builders/vq_vae.py
 nosaveddata/builders/weight_init.py
 nosaveddata/builders/dnc/__init__.py
 nosaveddata/builders/dnc/dnc.py
 nosaveddata/builders/dnc/memory.py
+nosaveddata/nsd_preprocessing/__init__.py
+nosaveddata/nsd_preprocessing/vision.py
 nosaveddata/nsd_utils/__init__.py
 nosaveddata/nsd_utils/bbf.py
 nosaveddata/nsd_utils/cv.py

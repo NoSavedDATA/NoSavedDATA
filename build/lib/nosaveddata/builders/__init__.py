@@ -6,6 +6,7 @@ from .cfc import *
 from .dnc import *
 
 from .resnet import *
+from .vit import *
 from .token_learner import *
 from .vq_vae import *
 
