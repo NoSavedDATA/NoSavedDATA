@@ -116,6 +116,73 @@ class UNet_DiT(nn.Module):
         return x
     
 
-    
+# Reports for 400k steps and no guidance
+
+def UNet_DiT_S_4(**kwargs):
+    # FID 100.41
+    # GFlop 1.41
+    # Params 33
+    return UNet_DiT(d_model=384, num_blks=12, patch=(4,4), nhead=6, **kwargs)
+
+def UNet_DiT_S_2(**kwargs):
+    # FID 68.4
+    # GFlop 6.06
+    # Params 33
+    return UNet_DiT(d_model=384, num_blks=12, patch=(2,2), nhead=6, **kwargs)
+
+def UNet_DiT_B_4(**kwargs):
+    # FID 68.38
+    # GFlop 5.56
+    # Params 130
+    return UNet_DiT(d_model=768, num_blks=12, patch=(4,4), nhead=12, **kwargs)
+
+def UNet_DiT_B_2(**kwargs):
+    # FID 43.47
+    # GFlop 23.01
+    # Params 130
+    return UNet_DiT(d_model=768, num_blks=12, patch=(2,2), nhead=12, **kwargs)
+
+def UNet_DiT_L_4(**kwargs):
+    # FID 45.64
+    # GFlop 19.7
+    # Params 458
+    return UNet_DiT(d_model=1024, num_blks=24, patch=(4,4), nhead=16, **kwargs)
+
+def UNet_DiT_L_2(**kwargs):
+    # FID 23.33
+    # GFlop 80.71
+    # Params 458
+    return UNet_DiT(d_model=1024, num_blks=24, patch=(2,2), nhead=16, **kwargs)
+
 def UNet_DiT_XL_2(**kwargs):
+    # FID 25.21
+    # GFlop 118.64
+    # Params 675
     return UNet_DiT(d_model=1152, num_blks=28, patch=(2,2), nhead=16, **kwargs)
+
+
+
+class UNet_DiT_1D(nn.Module):
+    def __init__(self, in_channels, d_model, num_blks, nhead, seq_len,
+                             dropout = 0.1, bias=False, report_params_count=True,
+                             ffn_mult=4):
+        super().__init__()
+        self.first_channel=in_channels
+        
+        self.ts = TimestepEmbedder(d_model)
+        
+        self.in_proj = MLP(in_channels, out_hiddens=d_model, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        
+        self.dit =  DiT_Transformer(d_model, num_blks, nhead, seq_len,
+                             dropout = 0.1, bias=False, report_params_count=True,
+                             ffn_mult=4)
+        
+        self.out_proj = MLP(d_model, out_hiddens=in_channels, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        
+    
+    def forward(self, x, t):
+        c = self.ts(t)
+        x = self.in_proj(x)
+        x = self.dit(x, c)
+        x = self.out_proj(x)
+        return x

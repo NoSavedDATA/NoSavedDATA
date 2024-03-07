@@ -159,3 +159,30 @@ def UNet_DiT_XL_2(**kwargs):
     # GFlop 118.64
     # Params 675
     return UNet_DiT(d_model=1152, num_blks=28, patch=(2,2), nhead=16, **kwargs)
+
+
+
+class UNet_DiT_1D(nn.Module):
+    def __init__(self, in_channels, d_model, num_blks, nhead, seq_len,
+                             dropout = 0.1, bias=False, report_params_count=True,
+                             ffn_mult=4):
+        super().__init__()
+        self.first_channel=in_channels
+        
+        self.ts = TimestepEmbedder(d_model)
+        
+        self.in_proj = MLP(in_channels, out_hiddens=d_model, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        
+        self.dit =  DiT_Transformer(d_model, num_blks, nhead, seq_len,
+                             dropout = 0.1, bias=False, report_params_count=True,
+                             ffn_mult=4)
+        
+        self.out_proj = MLP(d_model, out_hiddens=in_channels, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        
+    
+    def forward(self, x, t):
+        c = self.ts(t)
+        x = self.in_proj(x)
+        x = self.dit(x, c)
+        x = self.out_proj(x)
+        return x
