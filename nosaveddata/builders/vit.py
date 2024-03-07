@@ -23,17 +23,17 @@ class ViT(nn.Module):
         self.patches = np.prod(patches)
         self.N = int(np.prod(img_size)/self.patches)
         
+        self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
+        
         self.transformer = GPT_Transformer(d_model, num_blks, nhead, seq_len=self.N,
                  dropout = dropout, bias=bias, report_params_count=report_params_count,
                  ffn_mult=ffn_mult)
         
-        self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
         params_count(self, 'ViT Encoder')
     
     def patchify(self, X):
         X = X.view(-1, self.patches*self.first_channel, self.N).transpose(-2,-1)
-        
         return X
     
     def proj(self, X):
@@ -63,6 +63,8 @@ class ViT_Temporal(nn.Module):
         self.patches = np.prod(patches)
         self.N = int(np.prod(img_size)/self.patches)
         
+        self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
+        
         self.transformer = GPT_Transformer(d_model, num_blks, nhead, seq_len=self.N,
                  dropout = dropout, bias=bias, report_params_count=report_params_count,
                  ffn_mult=ffn_mult)
@@ -71,7 +73,6 @@ class ViT_Temporal(nn.Module):
                  dropout = dropout, bias=bias, report_params_count=report_params_count,
                  ffn_mult=ffn_mult)
         
-        self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
         params_count(self, 'ViT Temporal')
     
@@ -118,7 +119,7 @@ class ViT_IWM(nn.Module):
         
         self.encoder = encoder
         
-        self.predictor_proj = MLP(d_encoder, out_hiddens=d_predictor, out_act=nn.ReLU(), last_init=init_relu) \
+        self.predictor_proj = MLP(d_encoder, out_hiddens=d_predictor, last_init=init_xavier) \
                               if d_predictor!=d_encoder else nn.Identity()
         
         self.predictor = GPT_Transformer(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N,

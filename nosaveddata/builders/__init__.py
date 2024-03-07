@@ -15,6 +15,7 @@ from .transformer import *
 from .transformer_llama import *
 
 from .unet import *
+from .unet_dit import *
 from .unet_conditional import *
 from .unet_temporal import *
 from .unet_temporal_controlnet import *

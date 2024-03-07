@@ -393,6 +393,7 @@ class DiT_Transformer(nn.Module):
         #nn.init.xavier_uniform_(self.pos_encoding[0].weight)
         
         self.apply(self._init_weights)
+        self.init_weights()
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
             if pn.endswith('proj.weight'):
@@ -411,7 +412,13 @@ class DiT_Transformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             #torch.nn.init.xavier_normal_(module.weight)
-
+    
+    def init_weights(self):
+        
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blks:
+            block.adaLN_modulation[-1].apply(init_zeros)
+    
         
     def forward(self, X, c):
         # Input:
@@ -427,25 +434,7 @@ class DiT_Transformer(nn.Module):
             
         return self.final_ln(X)
     
-# TODO Apply this on DiT Unet
-class DiT_FinalLayer(nn.Module):
-    """
-    The final layer of DiT.
-    """
-    def __init__(self, hidden_size, patch_size, out_channels):
-        super().__init__()
-        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
-        )
 
-    def forward(self, x, c):
-        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = modulate(self.norm_final(x), shift, scale)
-        x = self.linear(x)
-        return x
     
     
 

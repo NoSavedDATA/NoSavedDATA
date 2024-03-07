@@ -17,6 +17,7 @@ nosaveddata/builders/transformer.py
 nosaveddata/builders/transformer_llama.py
 nosaveddata/builders/unet.py
 nosaveddata/builders/unet_conditional.py
+nosaveddata/builders/unet_dit.py
 nosaveddata/builders/unet_temporal.py
 nosaveddata/builders/unet_temporal_controlnet.py
 nosaveddata/builders/vit.py
