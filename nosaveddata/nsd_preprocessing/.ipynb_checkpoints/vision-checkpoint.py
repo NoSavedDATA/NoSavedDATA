@@ -79,6 +79,7 @@ def plot_img(x):
     assert x.shape[-1]==3, 'Channels must be the last dimension'
     assert len(x.shape)==3, 'Use plot_imgs(x) instead'
     
+    plt.axis('off')
     plt.imshow(x)
     
 def plot_imgs(x):

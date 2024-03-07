@@ -107,15 +107,16 @@ class ViT_IWM(nn.Module):
                  patches=(16,16), img_size=(96,72),
                  stacked_frames=4,
                  masked_tokens=4,
+                 num_augmentations=2,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4):
         super().__init__()
         self.d_encoder = d_encoder
-        self.masked_tokens=masked_tokens
         self.stacked_frames=stacked_frames
         
         self.patches = np.prod(patches)
         self.N = int(np.prod(img_size)/self.patches)
+        self.masked_tokens=self.N//masked_tokens
         
         self.encoder = encoder
         
@@ -128,18 +129,16 @@ class ViT_IWM(nn.Module):
         
         self.mask = MLP(1, out_hiddens=d_encoder, last_init=init_xavier)
         self.mask_pos_encoding = nn.Embedding(self.N, d_encoder)
-        self.mask_mlp = MLP(d_encoder, d_encoder, d_encoder, layers=4, in_act=nn.ReLU(), out_act=nn.ReLU(),
+        self.mask_mlp = MLP(d_encoder+num_augmentations, d_encoder, d_encoder, layers=4, in_act=nn.ReLU(), out_act=nn.ReLU(),
                             init=init_relu, last_init=init_relu)
         
-        self.out_proj = nn.Sequential(Rearrange('b t d -> b (t d)'),
-                                      MLP(self.N*d_encoder, out_hiddens=out_dim, last_init=init_xavier))
         
         params_count(self, 'IWM')
     
-    def get_mask(self, X):
+    def get_mask(self, X, augmentations):
         B, T, D = X.shape
         B = B//self.stacked_frames
-        m_rand = random.randint(0,3)
+        m_rand = random.randint(0,self.masked_tokens*2)
         
         mask_pos = torch.randint(0, T, (B,self.masked_tokens+m_rand), device='cuda')
         mask_pos_repeat = mask_pos.repeat_interleave(self.stacked_frames,0)
@@ -150,7 +149,9 @@ class ViT_IWM(nn.Module):
         mask = self.mask(torch.ones(B*self.stacked_frames,self.masked_tokens+m_rand,1, device='cuda'))
         
         mask = mask + self.mask_pos_encoding(mask_pos_repeat)
-        mask = self.mask_mlp(mask)
+        augmentations = augmentations.repeat_interleave(self.stacked_frames,0)[:,None].expand(-1,mask.shape[1],-1)
+        
+        mask = self.mask_mlp(torch.cat((mask,augmentations),-1))
         
         
         X.view(-1,D)[X_mask_pos]=X.view(-1,D)[X_mask_pos]*0+mask.view(-1,D)
@@ -162,20 +163,12 @@ class ViT_IWM(nn.Module):
     
     def encode(self, X):
         return self.encoder(X)
+
     
-    def project(self, X):
-        return self.out_proj(X)
-    
-    def encode_project(self, X):
-        X = self.encoder(X)
-        return self.out_proj(X)
-    
-    def forward(self, X, y):
+    def forward(self, X, y, augmentations):
         X = self.encoder.proj(X)
-        X_masked, mask_pos = self.get_mask(X)
-        
+        X_masked, mask_pos = self.get_mask(X, augmentations)
         X = self.encoder.transformers(X_masked)
-        
         
         X = self.predictor_proj(X)
         
