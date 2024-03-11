@@ -253,8 +253,9 @@ class GPT_Transformer(nn.Module):
         super().__init__()
         self.num_hiddens = d_model
 
-        self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
-                                          LayerNormNoBias(d_model)) #Stable Embedding Layer
+        #self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
+        #                                  LayerNormNoBias(d_model)) #Stable Embedding Layer
+        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
         
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
@@ -281,12 +282,15 @@ class GPT_Transformer(nn.Module):
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
+                
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
+    
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.bias, 0)
+            nn.init.constant_(module.weight, 1.0)
 
         
     def forward(self, X, is_causal=True):
@@ -341,6 +345,75 @@ class GPT_NLP(nn.Module):
         return self.cls(X)
 
 
+
+class Transformer_Block_NoLN(nn.Module):
+    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4):
+        super().__init__()
+        self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.mlp = FFN(d_model, dropout, bias, ffn_mult)
+
+    def forward(self, x, is_causal=True):
+        x = x + self.attn(x, x, x, is_causal=is_causal)
+        x = x + self.mlp(x)
+        return x
+
+class Transformer_NoDATA(nn.Module):
+    def __init__(self, d_model, num_blks, nhead, seq_len,
+                 dropout = 0.1, bias=False, report_params_count=True,
+                 ffn_mult=4, scale_init=1):
+        super().__init__()
+        self.num_hiddens = d_model
+        if scale_init==1:
+            scale_init=num_blks
+        
+        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
+        
+        self.final_ln = LayerNormNoBias(d_model)
+        self.start_dropout = nn.Dropout(dropout)
+        self.seq_len = seq_len
+
+        self.blks = nn.Sequential()
+        for i in range(num_blks):
+            self.blks.add_module("block"+str(i), Transformer_Block_NoLN(
+                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult))
+            
+        
+        
+        # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
+        
+        self.apply(init_xavier)
+        self.apply(self._init_weights)
+        
+        for pn, p in self.named_parameters():
+            if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
+                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
+        
+        if report_params_count:
+            params_to_count = [p for p in self.parameters() if p.requires_grad]
+            print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Embedding):
+            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
+            torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
+            
+    
+
+        
+    def forward(self, X, is_causal=True):
+
+        pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
+        pos_emb = self.pos_encoding(pos)
+        X = self.start_dropout(X+pos_emb)
+
+        for i, blk in enumerate(self.blks):
+            X = blk(X, is_causal)
+            
+        return self.final_ln(X)
+
+
+
+
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
     
@@ -364,21 +437,24 @@ class DiT_Block(nn.Module):
         
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
+        #x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
+        x_ln = modulate(x, shift_msa, scale_msa)
         x = x + gate_msa[:,None] * self.attn(x_ln, x_ln, x_ln, is_causal=False)
-        x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
+        #x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
+        x = x + gate_mlp[:,None] * self.mlp(modulate(x, shift_mlp, scale_mlp))
         return x
     
     
 class DiT_Transformer(nn.Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
-                 ffn_mult=4):
+                 ffn_mult=4, scale_init=1):
         super().__init__()
+        if scale_init==1:
+            scale_init=num_blks
         self.num_hiddens = d_model
 
-        self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
-                                          LayerNormNoBias(d_model)) #Stable Embedding Layer
+        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
         
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
@@ -392,26 +468,21 @@ class DiT_Transformer(nn.Module):
         
         #nn.init.xavier_uniform_(self.pos_encoding[0].weight)
         
+        self.apply(init_xavier)
         self.apply(self._init_weights)
-        self.init_weights()
-        # apply special scaled init to the residual projections, per GPT-2 paper
+        
         for pn, p in self.named_parameters():
-            if pn.endswith('proj.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+            if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
+                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
         
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
             print(f'DiT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
         
     def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
+        if isinstance(module, nn.Embedding):
+            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
+            torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
     
     def init_weights(self):
         

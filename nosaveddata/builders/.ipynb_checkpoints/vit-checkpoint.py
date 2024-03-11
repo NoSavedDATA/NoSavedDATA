@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .weight_init import *
-from .mlp import MLP
-from .transformer import  GPT_Transformer
+from .mlp import MLP, MLP_NoDATA
+from .transformer import  GPT_Transformer, Transformer_NoDATA
 from ..nsd_utils.networks import params_count
+from ..nsd_utils.bbf import network_ema
 
-
+import math
 import numpy as np
 import random
 
@@ -25,12 +26,13 @@ class ViT(nn.Module):
         
         self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
-        self.transformer = GPT_Transformer(d_model, num_blks, nhead, seq_len=self.N,
-                 dropout = dropout, bias=bias, report_params_count=report_params_count,
+        self.transformer = Transformer_NoDATA(d_model, num_blks, nhead, seq_len=self.N,
+                 dropout = dropout, bias=bias, report_params_count=False,
                  ffn_mult=ffn_mult)
         
         
-        params_count(self, 'ViT Encoder')
+        if report_params_count:
+            params_count(self, 'ViT Encoder')
     
     def patchify(self, X):
         X = X.view(-1, self.patches*self.first_channel, self.N).transpose(-2,-1)
@@ -65,19 +67,19 @@ class ViT_Temporal(nn.Module):
         
         self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
-        self.transformer = GPT_Transformer(d_model, num_blks, nhead, seq_len=self.N,
-                 dropout = dropout, bias=bias, report_params_count=report_params_count,
-                 ffn_mult=ffn_mult)
+        self.transformer = Transformer_NoDATA(d_model, num_blks, nhead, seq_len=self.N,
+                 dropout = dropout, bias=bias, report_params_count=False,
+                 ffn_mult=ffn_mult, scale_init=12)
         
-        self.temporal_aggr = GPT_Transformer(d_model, temporal_aggr_num_blks, nhead, seq_len=self.N*stacked_frames,
-                 dropout = dropout, bias=bias, report_params_count=report_params_count,
-                 ffn_mult=ffn_mult)
+        self.temporal_aggr = Transformer_NoDATA(d_model, temporal_aggr_num_blks, nhead, seq_len=self.N*stacked_frames,
+                 dropout = dropout, bias=bias, report_params_count=False,
+                 ffn_mult=ffn_mult, scale_init=12)
         
-        
-        params_count(self, 'ViT Temporal')
+        if report_params_count:
+            params_count(self, 'ViT Temporal')
     
     def patchify(self, X):
-        X = X.view(X.shape[0]*self.stacked_frames, -1, *X.shape[-2:])
+        X = X.contiguous().view(X.shape[0]*self.stacked_frames, -1, *X.shape[-2:])
         X = X.view(-1, self.patches*self.first_channel, self.N).transpose(-2,-1)
         return X
     
@@ -103,19 +105,17 @@ class ViT_Temporal(nn.Module):
 class ViT_IWM(nn.Module):
     def __init__(self, encoder, d_encoder,
                  d_predictor, num_blks_predictor, nhead_predictor,
-                 out_dim=2048,
-                 patches=(16,16), img_size=(96,72),
                  stacked_frames=4,
                  masked_tokens=4,
-                 num_augmentations=2,
+                 num_augmentations=3,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4):
         super().__init__()
         self.d_encoder = d_encoder
         self.stacked_frames=stacked_frames
         
-        self.patches = np.prod(patches)
-        self.N = int(np.prod(img_size)/self.patches)
+        self.patches = encoder.patches
+        self.N = encoder.N
         self.masked_tokens=self.N//masked_tokens
         
         self.encoder = encoder
@@ -123,22 +123,36 @@ class ViT_IWM(nn.Module):
         self.predictor_proj = MLP(d_encoder, out_hiddens=d_predictor, last_init=init_xavier) \
                               if d_predictor!=d_encoder else nn.Identity()
         
-        self.predictor = GPT_Transformer(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N,
-                 dropout = dropout, bias=bias, report_params_count=report_params_count,
-                 ffn_mult=ffn_mult)
+        self.predictor = Transformer_NoDATA(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N,
+                 dropout = dropout, bias=bias, report_params_count=False,
+                 ffn_mult=ffn_mult, scale_init=num_blks_predictor)
         
         self.mask = MLP(1, out_hiddens=d_encoder, last_init=init_xavier)
         self.mask_pos_encoding = nn.Embedding(self.N, d_encoder)
         self.mask_mlp = MLP(d_encoder+num_augmentations, d_encoder, d_encoder, layers=4, in_act=nn.ReLU(), out_act=nn.ReLU(),
                             init=init_relu, last_init=init_relu)
+
         
+        self.mask_pos_encoding.apply(init_xavier)
+
         
-        params_count(self, 'IWM')
+        if report_params_count:
+            params_count(self, 'IWM')
+
+    def hard_reset(self, new_network, alpha):
+        network_ema(self.encoder, new_network.encoder, alpha)
+        
+        network_ema(self.predictor_proj, new_network.predictor_proj, 0.3)
+        network_ema(self.predictor, new_network.predictor, 0.3)
+
+        network_ema(self.mask, new_network.mask, 0.3)
+        network_ema(self.mask_pos_encoding, new_network.mask_pos_encoding, 0.3)
+        network_ema(self.mask_mlp, new_network.mask_mlp, 0.3)
     
     def get_mask(self, X, augmentations):
         B, T, D = X.shape
         B = B//self.stacked_frames
-        m_rand = random.randint(0,self.masked_tokens*2)
+        m_rand = random.randint(0,int(self.masked_tokens*1.3))
         
         mask_pos = torch.randint(0, T, (B,self.masked_tokens+m_rand), device='cuda')
         mask_pos_repeat = mask_pos.repeat_interleave(self.stacked_frames,0)

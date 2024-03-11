@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import math
+
 from diffusers import DDIMScheduler
 
 from .weight_init import *
@@ -52,6 +54,43 @@ class MLP(nn.Module):
         self.mlp.apply(self.init)
         self.mlp[-2].apply(self.last_init)
         
+        
+    def forward(self,X):
+        return self.mlp(X)
+
+
+class MLP_NoDATA(nn.Module):
+    def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
+                 init=init_relu, in_act=nn.SiLU(), out_act=nn.Identity(),
+                 ln_eps=1e-3, last_init=init_xavier, bias=True):
+        super().__init__()
+        # Special MLP with custom options for non last layer and last layer Linears.
+
+        modules=[]
+        self.init=init
+        self.last_init=last_init
+        
+        hiddens=in_hiddens
+        _out_hiddens = med_hiddens
+        act = in_act
+        for l in range(layers):
+            last_layer = l==(layers-1)
+            if last_layer:
+                _out_hiddens = out_hiddens
+                act = out_act
+            modules.append(nn.Linear(hiddens, _out_hiddens, bias=bias))
+            
+            modules.append(act)
+            hiddens=med_hiddens
+        self.mlp=nn.Sequential(*modules)
+        #print(self.mlp)
+
+        for pn, p in self.named_parameters():
+            if pn.endswith('weight'):
+                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*14)).pow(-1/4))
+            if pn.endswith('bias'):
+                torch.nn.init.zeros_(p)
+
         
     def forward(self,X):
         return self.mlp(X)

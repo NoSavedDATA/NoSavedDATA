@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
+import math
 
 
 '''MLP AND LINEARS'''
@@ -71,10 +72,25 @@ def init_alphastar_special(module):
     # Ref: Alphastar
     if isinstance(module, nn.Linear):
         torch.nn.init.normal_(module.weight, mean=0.0, std=0.005)
-        #torch.nn.init.xavier_normal_(module.weight)
         if module.bias is not None:
             torch.nn.init.zeros_(module.bias)
 
+def init_emb(module):
+    if type(module) == nn.Linear:
+        torch.nn.init.normal_(module.weight, std=math.sqrt(1/module.weight.shape[0]))
+        if module.bias is not None:
+            torch.nn.init.zeros_(module.bias) 
+            
+    if type(module) == nn.Embedding:
+        torch.nn.init.normal_(module.weight, std=math.sqrt(1/module.weight.shape[1]))
+
+def init_saving_variance(module, num_blks):
+    
+    torch.nn.init.xavier_uniform_(module.weight, gain=torch.tensor(9*num_blks).pow(-1/4))
+    if hasattr(module, 'bias'):
+        if module.bias is not None:
+            torch.nn.init.zeros_(module.bias)
+            
 
 def init_gpt(module):
     #print(f"From init_gpt.\nGpt proj linears should have a special weight initialization not implemented here.")
@@ -98,6 +114,7 @@ def init_proj(module):
 
 
 
+        
 '''CNN'''
 
 def init_cnn(module):
@@ -115,10 +132,14 @@ def init_cnn(module):
 def init_dreamer_normal(module):
     if type(module) == nn.Linear or type(module) == nn.Conv2d or type(module) == nn.Conv1d or type(module) == nn.Conv3d:
 
-        
-        space = module.kernel_size[0] * module.kernel_size[1]
-        in_num = space * module.in_channels
-        out_num = space * module.out_channels
+        if type(module)==nn.Linear():
+            space = module.weight.shape[1] * module.weight.shape[0]
+            in_num = space * module.weight.shape[1]
+            out_num = space * module.weight.shape[1]
+        else:
+            space = module.kernel_size[0] * module.kernel_size[1]
+            in_num = space * module.in_channels
+            out_num = space * module.out_channels
         
         std = np.sqrt((1/np.mean(np.array([in_num, out_num])))) / 0.87962566103423978
         nn.init.trunc_normal_(module.weight.data, mean=0.0, std=std, a=-2.0 * std, b=2.0 * std)
@@ -129,6 +150,7 @@ def init_dreamer_normal(module):
         
 
 def init_dreamer_uniform(m):
+    # Same as xavier uniform
     '''
     if type(m) == nn.Linear or type(m) == nn.Conv2d:
         torch.nn.init.xavier_uniform_(m.weight)

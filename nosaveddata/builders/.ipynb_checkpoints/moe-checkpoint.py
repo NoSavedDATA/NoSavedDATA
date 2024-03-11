@@ -128,9 +128,8 @@ class SoftMoE_Combine_Output(nn.Module):
         #self.dispatch_w_remove_grads.turn_off_grads()
         
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*projected_dim, last_init=init_relu)]*num_experts)
-        
-        #self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_relu)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*projected_dim, out_act=act, last_init=init_xavier)]*num_experts)
+        self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_xavier)
 
         params_count(self, 'Soft MoE')
     
@@ -152,7 +151,7 @@ class SoftMoE_Combine_Output(nn.Module):
         #y = y.view(B, -1, D)
         y = y.view(B, -1, self.projected_dim)
         
-        #y = self.expert_projection(y)
+        y = self.expert_projection(y)
         y = combine_w@y
         
         return y.squeeze(), combine_w.squeeze()
@@ -176,7 +175,7 @@ class SoftMoE_Combine_Output(nn.Module):
         #y = y.view(B, -1, D)
         y = y.view(B, -1, self.projected_dim)
         
-        #y = self.expert_projection(y)
+        y = self.expert_projection(y)
         y = combine_w@y
         
         return y.squeeze(), combine_w.squeeze()
