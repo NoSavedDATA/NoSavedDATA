@@ -257,7 +257,7 @@ class GPT_Transformer(nn.Module):
 
         #self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
         #                                  LayerNormNoBias(d_model)) #Stable Embedding Layer
-        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
+        self.pos_encoding = nn.Embedding(seq_len, d_model)
         
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
@@ -297,7 +297,7 @@ class GPT_Transformer(nn.Module):
         
     def forward(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
 
