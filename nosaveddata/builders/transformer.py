@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import math
 
 from .weight_init import *
+from ..nsd_utils.save_hypers import nsd_Module
 
 
 @torch.jit.script # JIT decorator
@@ -33,7 +34,7 @@ class LayerNormNoBias(nn.Module):
 
 
     
-class Attention(nn.Module):
+class Attention(nsd_Module):
     def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
@@ -45,9 +46,6 @@ class Attention(nn.Module):
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
-        self.n_head = num_heads
-        self.n_embd = d_model
-        self.dropout = dropout
 
     def forward(self, q, k, v, is_causal):
         B, T, C = q.size()
@@ -74,7 +72,7 @@ class Attention(nn.Module):
         return y
 
 
-class MemoryAttention(nn.Module):
+class MemoryAttention(nsd_Module):
     def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
@@ -84,9 +82,6 @@ class MemoryAttention(nn.Module):
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
-        self.n_head = num_heads
-        self.n_embd = d_model
-        self.dropout = dropout
 
     def forward(self, x, q):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -248,7 +243,7 @@ class GPT_Block(nn.Module):
     
 
 
-class GPT_Transformer(nn.Module):
+class GPT_Transformer(nsd_Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4):
@@ -308,16 +303,10 @@ class GPT_Transformer(nn.Module):
     
 
 
-class GPT_NLP(nn.Module):
+class GPT_NLP(nsd_Module):
     def __init__(self, hiddens, num_blks, nhead, seq_len, vocab_size=50257, temperature=1.0, k=20, p=0.9, sampling='gpt', report_params_count=True, tied_weights=True):
         super().__init__()
-        self.vocab_size = vocab_size
-        self.embed_dim = hiddens
         
-        self.sampling=sampling
-        self.temperature = temperature
-        self.k=k
-        self.p=p
         
         self.emb_vocab = nn.Embedding(vocab_size, hiddens)
         self.gpt = GPT_Transformer(hiddens, nhead=nhead, num_blks=num_blks)
@@ -339,7 +328,7 @@ class GPT_NLP(nn.Module):
         X[mask] = self.vocab_size-1
         
         X = self.emb_vocab(X)
-        #cls = torch.autograd.Variable(torch.zeros(batch_size, 2, self.embed_dim)).to('cuda')
+        #cls = torch.autograd.Variable(torch.zeros(batch_size, 2, self.hiddens)).to('cuda')
         
         #X = torch.cat((X, cls), dim=1)
         X = self.gpt(X, is_causal=is_causal)
@@ -375,13 +364,11 @@ class Transformer_Block_NoLN(nn.Module):
 
         return x, means/3, stds/3
 
-class Transformer_NoDATA(nn.Module):
+class Transformer_NoDATA(nsd_Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4, scale_init=1):
         super().__init__()
-        self.num_hiddens = d_model
-        self.scale_init=scale_init
         if scale_init==1:
             self.scale_init=num_blks
 
@@ -390,8 +377,7 @@ class Transformer_NoDATA(nn.Module):
 
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
-        self.seq_len = seq_len
-        self.num_blks=num_blks
+        
 
         self.blks = nn.Sequential()
         for i in range(num_blks):
@@ -420,7 +406,7 @@ class Transformer_NoDATA(nn.Module):
     def _init_weights(self, module):
         
         if isinstance(module, nn.Embedding):
-            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
+            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.d_model))
             torch.nn.init.xavier_uniform_(module.weight, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
         '''
         if isinstance(module, nn.Linear):
@@ -509,20 +495,19 @@ class DiT_Block(nn.Module):
         return x
     
     
-class DiT_Transformer(nn.Module):
+class DiT_Transformer(nsd_Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4, scale_init=1):
         super().__init__()
         if scale_init==1:
             scale_init=num_blks
-        self.num_hiddens = d_model
 
         self.pos_encoding = nn.Embedding(seq_len, d_model)
         
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
-        self.seq_len = seq_len
+        
 
         self.blks = nn.Sequential()
         for i in range(num_blks):
@@ -545,7 +530,7 @@ class DiT_Transformer(nn.Module):
         
     def _init_weights(self, module):
         if isinstance(module, nn.Embedding):
-            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
+            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.d_model))
             torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
     
     def init_weights(self):
