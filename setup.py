@@ -13,7 +13,11 @@ setup(
         #'transformers==4.31.0',
         #'gradio==3.50.2',
         'diffusers',
-        'wandb'
+        'wandb',
+        'einops',
+        'opencv-python',
+        'matplotlib',
+        'pandas'
     ],
     zip_safe=False,
 )

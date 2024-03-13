@@ -1,2 +1,6 @@
 diffusers
 wandb
+einops
+opencv-python
+matplotlib
+pandas

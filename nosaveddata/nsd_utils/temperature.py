@@ -10,7 +10,7 @@ def get_gpu_cpu_temps():
     for core, temp in enumerate(psutil.sensors_temperatures()['coretemp']):
         if 'Package' not in temp[0]:
             print(temp[1])
-    	temperatures.append(str(temp[1]))
+        temperatures.append(str(temp[1]))
     temperatures = '|'.join(temperatures)
 
 

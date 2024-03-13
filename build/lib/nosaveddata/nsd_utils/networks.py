@@ -13,12 +13,15 @@ def params_count(model, name='Model'):
 
 def params_and_grad_norm(model):
     param_norm, grad_norm = 0, 0
-    for param in model.parameters():
-        param_norm += torch.norm(param.data)
-        if param.grad is not None:
-            grad_norm += torch.norm(param.grad)
+    for n, param in model.named_parameters():
+        if not n.endswith('.bias'):
+            param_norm += torch.norm(param.data)
+            if param.grad is not None:
+                grad_norm += torch.norm(param.grad)
     return param_norm, grad_norm
 
+
+# From STORM Atari-100k
 def seed_np_torch(seed=20001118):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)

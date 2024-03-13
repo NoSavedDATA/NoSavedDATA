@@ -238,9 +238,11 @@ class GPT_Block(nn.Module):
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
     def forward(self, x, is_causal=True):
-        x = self.ln_1(x)
-        x = x + self.attn(x, x, x, is_causal=is_causal)
+        x_ln = self.ln_1(x)
+        x = x + self.attn(x_ln, x_ln, x_ln, is_causal=is_causal)
+        print('attn', x.mean(), x.std())
         x = x + self.mlp(self.ln_2(x))
+        print('ffn', x.mean(), x.std())
         return x
     
     
@@ -354,7 +356,9 @@ class Transformer_Block_NoLN(nn.Module):
 
     def forward(self, x, is_causal=True):
         x = x + self.attn(x, x, x, is_causal=is_causal)
+        print('attn', x.mean(), x.std())
         x = x + self.mlp(x)
+        print('ffn', x.mean(), x.std())
         return x
 
 class Transformer_NoDATA(nn.Module):
@@ -368,7 +372,7 @@ class Transformer_NoDATA(nn.Module):
         
         self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
         
-        self.final_ln = LayerNormNoBias(d_model)
+        self.start_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
         self.seq_len = seq_len
 
@@ -405,11 +409,13 @@ class Transformer_NoDATA(nn.Module):
         pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
         pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
-
+        
+        X = self.start_ln(X)
+        
         for i, blk in enumerate(self.blks):
             X = blk(X, is_causal)
             
-        return self.final_ln(X)
+        return X
 
 
 
