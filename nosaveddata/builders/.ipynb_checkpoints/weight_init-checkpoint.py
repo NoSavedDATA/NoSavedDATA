@@ -86,7 +86,7 @@ def init_emb(module):
 
 def init_saving_variance(module, num_blks):
     
-    torch.nn.init.xavier_uniform_(module.weight, gain=torch.tensor(9*num_blks).pow(-1/4))
+    torch.nn.init.xavier_uniform_(module.weight, gain=torch.tensor(4*num_blks).pow(-1/4))
     if hasattr(module, 'bias'):
         if module.bias is not None:
             torch.nn.init.zeros_(module.bias)
