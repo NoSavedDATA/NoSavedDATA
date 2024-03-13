@@ -349,17 +349,31 @@ class GPT_NLP(nn.Module):
 
 
 class Transformer_Block_NoLN(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4):
+    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4, stochastic_depth=1):
         super().__init__()
+        self.stochastic_depth=stochastic_depth
+        self.ln_1 = LayerNormNoBias(d_model, bias=bias)
         self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
     def forward(self, x, is_causal=True):
-        x = x + self.attn(x, x, x, is_causal=is_causal)
-        print('attn', x.mean(), x.std())
-        x = x + self.mlp(x)
-        print('ffn', x.mean(), x.std())
-        return x
+        #x = renormalize(x)
+        keep_path = torch.ones(x.shape[0],device='cuda')*(self.stochastic_depth if self.training else 1)
+        keep_path = torch.bernoulli(keep_path)[:,None,None]
+        
+        means, stds = 0, 0
+        means += x.mean()
+        stds += x.std()
+        #x_ln = self.ln_1(x)
+        x = x + self.attn(x, x, x, is_causal=is_causal)*keep_path
+        means += x.mean()
+        stds += x.std()
+        x = x + self.mlp(x)*keep_path
+        means += x.mean()
+        stds += x.std()
+
+        return x, means/3, stds/3
 
 class Transformer_NoDATA(nn.Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
@@ -367,54 +381,98 @@ class Transformer_NoDATA(nn.Module):
                  ffn_mult=4, scale_init=1):
         super().__init__()
         self.num_hiddens = d_model
+        self.scale_init=scale_init
         if scale_init==1:
-            scale_init=num_blks
-        
-        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
-        
-        self.start_ln = LayerNormNoBias(d_model)
+            self.scale_init=num_blks
+
+
+        self.pos_encoding = nn.Embedding(seq_len, d_model)
+
+        self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
         self.seq_len = seq_len
+        self.num_blks=num_blks
 
         self.blks = nn.Sequential()
         for i in range(num_blks):
             self.blks.add_module("block"+str(i), Transformer_Block_NoLN(
-                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult))
-            
-        
-        
+                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult,
+                                stochastic_depth=1-i/num_blks*(0.9)))
+
+
+
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
-        
+
         self.apply(init_xavier)
         self.apply(self._init_weights)
-        
+
         for pn, p in self.named_parameters():
             if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
-                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
-        
+                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
+        #for pn, p in self.named_parameters():
+        #    if pn.endswith('proj.weight'):
+        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
             print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
-        
+
     def _init_weights(self, module):
+        
         if isinstance(module, nn.Embedding):
             #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
-            torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
-            
+            torch.nn.init.xavier_uniform_(module.weight, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
+        '''
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+                
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
     
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.bias, 0)
+            nn.init.constant_(module.weight, 1.0)
+        '''
 
-        
     def forward(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
-        pos_emb = self.pos_encoding(pos)
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
         X = self.start_dropout(X+pos_emb)
-        
-        X = self.start_ln(X)
+        X = self.final_ln(X)
+
+        means, stds = 0, 0
+        for i, blk in enumerate(self.blks):
+            X, mean, std = blk(X, is_causal)
+            means += mean
+            stds += std
+
+        return X, means/self.num_blks, stds/self.num_blks
+    
+    def no_pos(self, X, is_causal=True):
+        X = self.start_dropout(X)
+        X = self.final_ln(X)
         
         for i, blk in enumerate(self.blks):
-            X = blk(X, is_causal)
-            
+            X, _, _ = blk(X, is_causal)
+
+        return X
+    
+    def masked(self, X, mask, is_causal=True):
+
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        X = self.start_dropout(X+pos_emb)
+        X = X.gather(1, mask)
+        
+        X = self.final_ln(X)
+
+        
+        for i, blk in enumerate(self.blks):
+            X, _, _ = blk(X, is_causal)
+
         return X
 
 
@@ -460,7 +518,7 @@ class DiT_Transformer(nn.Module):
             scale_init=num_blks
         self.num_hiddens = d_model
 
-        self.pos_encoding = nn.Linear(seq_len, d_model, bias=False)
+        self.pos_encoding = nn.Embedding(seq_len, d_model)
         
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
@@ -502,7 +560,7 @@ class DiT_Transformer(nn.Module):
         # X e (B, T, D)
         # c e (B, D)
         
-        pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
 
@@ -536,8 +594,7 @@ class CrossAttention_Transformer(nn.Module):
         super().__init__()
         self.num_hiddens = d_model
 
-        self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
-                                          LayerNormNoBias(d_model)) #Stable Embedding Layer
+        self.pos_encoding = nn.Embedding(seq_len, d_model)
         
         self.out_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
@@ -572,7 +629,7 @@ class CrossAttention_Transformer(nn.Module):
     
     def forward(self, q, k, v, is_causal=False):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.float32, device='cuda')
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
         q = self.start_dropout(q+pos_emb)
         k = self.start_dropout(k+pos_emb)
