@@ -6,6 +6,8 @@ import math
 
 from diffusers import DDIMScheduler
 
+from ..nsd_utils.save_hypers import nsd_Module
+
 from .weight_init import *
 
 from .unet import sinusoidal_embedding
@@ -59,11 +61,13 @@ class MLP(nn.Module):
         return self.mlp(X)
 
 
-class MLP_NoDATA(nn.Module):
+class MLP_NoDATA(nsd_Module):
     def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
                  init=init_relu, in_act=nn.SiLU(), out_act=nn.Identity(),
-                 ln_eps=1e-3, last_init=init_xavier, bias=True):
+                 ln_eps=1e-3, last_init=init_xavier, bias=True, scale_init=1):
         super().__init__()
+        if scale_init==1:
+            self.scale_init = layers
         # Special MLP with custom options for non last layer and last layer Linears.
 
         modules=[]
@@ -87,7 +91,7 @@ class MLP_NoDATA(nn.Module):
 
         for pn, p in self.named_parameters():
             if pn.endswith('weight'):
-                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*14)).pow(-1/4))
+                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init)).pow(-1/4))
             if pn.endswith('bias'):
                 torch.nn.init.zeros_(p)
 
