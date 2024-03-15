@@ -5,7 +5,7 @@ print(f"{find_packages()}")
 setup(
     name='nosaveddata',
     description = "High level tools from my neural network projects",
-    version='0.1',
+    version='0.12',
     author='Augusto Seben da Rosa',
     author_email='snykralafk@gmail.com',
     packages=find_packages(),
@@ -15,7 +15,7 @@ setup(
         'diffusers',
         'wandb',
         'einops',
-        'opencv-python',
+        'opencv-python==4.8.0.74',
         'matplotlib',
         'pandas'
     ],

@@ -64,9 +64,9 @@ class MLP(nn.Module):
 class MLP_NoDATA(nsd_Module):
     def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
                  init=init_relu, in_act=nn.SiLU(), out_act=nn.Identity(),
-                 ln_eps=1e-3, last_init=init_xavier, bias=True, scale_init=1):
+                 ln_eps=1e-3, last_init=init_xavier, bias=True, scale_init=0):
         super().__init__()
-        if scale_init==1:
+        if scale_init==0:
             self.scale_init = layers
         # Special MLP with custom options for non last layer and last layer Linears.
 

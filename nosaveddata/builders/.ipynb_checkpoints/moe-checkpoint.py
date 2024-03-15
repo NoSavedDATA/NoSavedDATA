@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import math
 
 from ..nsd_utils.networks import params_count
+from ..nsd_utils.save_hypers import nsd_Module
 from .weight_init import *
 from .mlp import MLP
 from .transformer import Attention, FFN, LayerNormNoBias, GPT_Block
@@ -12,11 +13,9 @@ from .transformer import Attention, FFN, LayerNormNoBias, GPT_Block
 
 
 
-class SoftMoE(nn.Module):
+class SoftMoE(nsd_Module):
     def __init__(self, hiddens, num_experts=8, num_slots=1, act=nn.SiLU()):
         super().__init__()
-        self.num_experts = num_experts
-        self.num_slots = num_slots
 
         self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_lecun)
 
@@ -42,11 +41,9 @@ class SoftMoE(nn.Module):
 
         return y
 
-class SoftMoE_Projection(nn.Module):
+class SoftMoE_Projection(nsd_Module):
     def __init__(self, hiddens, projected_dim, num_experts=8, num_slots=1, act=nn.SiLU()):
         super().__init__()
-        self.num_experts = num_experts
-        self.num_slots = num_slots
         
         self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_lecun)
 
@@ -115,12 +112,10 @@ class SoftMoE_Combine_Output(nn.Module):
         return self.out_act(y.squeeze())
 '''
 
-class SoftMoE_Combine_Output(nn.Module):
+class SoftMoE_Combine_Output(nsd_Module):
     def __init__(self, hiddens, projected_dim, num_experts=8, num_slots=1, act=nn.SiLU()):
         super().__init__()
-        self.num_experts = num_experts
-        self.num_slots = num_slots
-        self.projected_dim=projected_dim
+        
 
         self.dispatch_attn_w = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_xavier)
 
@@ -128,7 +123,7 @@ class SoftMoE_Combine_Output(nn.Module):
         #self.dispatch_w_remove_grads.turn_off_grads()
         
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*projected_dim, out_act=act, last_init=init_xavier)]*num_experts)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_xavier)]*num_experts)
         self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_xavier)
 
         params_count(self, 'Soft MoE')
@@ -148,8 +143,8 @@ class SoftMoE_Combine_Output(nn.Module):
 
         y = torch.stack([f_i(slots[:,i]) for i, f_i in enumerate(self.experts)],1)
 
-        #y = y.view(B, -1, D)
-        y = y.view(B, -1, self.projected_dim)
+        y = y.view(B, -1, D)
+        #y = y.view(B, -1, self.projected_dim)
         
         y = self.expert_projection(y)
         y = combine_w@y
@@ -172,8 +167,8 @@ class SoftMoE_Combine_Output(nn.Module):
 
         y = torch.stack([f_i(slots[:,i]) for i, f_i in enumerate(self.experts)],1)
 
-        #y = y.view(B, -1, D)
-        y = y.view(B, -1, self.projected_dim)
+        y = y.view(B, -1, D)
+        #y = y.view(B, -1, self.projected_dim)
         
         y = self.expert_projection(y)
         y = combine_w@y
