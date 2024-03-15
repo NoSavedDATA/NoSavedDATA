@@ -123,7 +123,7 @@ class SoftMoE_Combine_Output(nsd_Module):
         #self.dispatch_w_remove_grads.turn_off_grads()
         
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_xavier)]*num_experts)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*projected_dim, out_act=act, last_init=init_xavier)]*num_experts)
         self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_xavier)
 
         params_count(self, 'Soft MoE')
@@ -140,14 +140,13 @@ class SoftMoE_Combine_Output(nsd_Module):
         combine_w = F.softmax(logits_dispatch.mean(1), -1)[:,None]
         
         slots = (dispatch_w.transpose(-2,-1)@X).contiguous().view(B,self.num_experts,-1)
-        print('SLOTS', slots.shape)
+        
         y = torch.stack([f_i(slots[:,i]) for i, f_i in enumerate(self.experts)],1)
-        print('EXPERT OUT',y.shape)
-        y = y.view(B, -1, D)
-        print('EXPERT RESHAPE',y.shape)
-        #y = y.view(B, -1, self.projected_dim)
-        print('EXPERT PROJECTION', y.shape)
-        y = self.expert_projection(y)
+        
+        #y = y.view(B, -1, D)
+        y = y.view(B, -1, self.projected_dim)
+        
+        #y = self.expert_projection(y)
         y = combine_w@y
         
         return y.squeeze(), combine_w.squeeze()
