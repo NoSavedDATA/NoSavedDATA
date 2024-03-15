@@ -145,7 +145,7 @@ class SoftMoE_Combine_Output(nsd_Module):
 
         y = y.view(B, -1, D)
         #y = y.view(B, -1, self.projected_dim)
-        
+        print('EXPERT PROJECTION', y.shape)
         y = self.expert_projection(y)
         y = combine_w@y
         
