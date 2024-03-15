@@ -140,10 +140,11 @@ class SoftMoE_Combine_Output(nsd_Module):
         combine_w = F.softmax(logits_dispatch.mean(1), -1)[:,None]
         
         slots = (dispatch_w.transpose(-2,-1)@X).contiguous().view(B,self.num_experts,-1)
-
+        print('SLOTS', slots.shape)
         y = torch.stack([f_i(slots[:,i]) for i, f_i in enumerate(self.experts)],1)
-
+        print('EXPERT OUT',y.shape)
         y = y.view(B, -1, D)
+        print('EXPERT RESHAPE',y.shape)
         #y = y.view(B, -1, self.projected_dim)
         print('EXPERT PROJECTION', y.shape)
         y = self.expert_projection(y)
