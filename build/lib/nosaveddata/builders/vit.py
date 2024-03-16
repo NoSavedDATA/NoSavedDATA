@@ -166,12 +166,12 @@ class ViT_IWM(nsd_Module):
     def hard_reset(self, new_network, alpha):
         network_ema(self.encoder, new_network.encoder, alpha)
 
-        network_ema(self.predictor_proj, new_network.predictor_proj, 0)
-        network_ema(self.predictor, new_network.predictor, 0)
+        network_ema(self.predictor_proj, new_network.predictor_proj, 0.3)
+        network_ema(self.predictor, new_network.predictor, 0.3)
 
-        network_ema(self.mask, new_network.mask, 0)
-        network_ema(self.mask_pos_encoding, new_network.mask_pos_encoding, 0)
-        network_ema(self.mask_mlp, new_network.mask_mlp, 0)
+        network_ema(self.mask, new_network.mask, 0.3)
+        network_ema(self.mask_pos_encoding, new_network.mask_pos_encoding, 0.3)
+        network_ema(self.mask_mlp, new_network.mask_mlp, 0.3)
 
     def get_random_mask(self, X, augmentations):
         B, T, D = X.shape

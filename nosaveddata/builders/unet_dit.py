@@ -69,21 +69,21 @@ class DiT_FinalLayer(nn.Module):
         return x
     
 
-class UNet_DiT(nn.Module):
+class UNet_DiT(nsd_Module):
     def __init__(self, in_channels, d_model, num_blks, nhead, patch=(2,2), img_size=(32,32),
                              dropout = 0.1, bias=False, report_params_count=True,
                              ffn_mult=4):
         super().__init__()
         self.first_channel=in_channels
         self.patches = np.prod(patch)
-        self.img_size=img_size
+        
         self.N = int(np.prod(img_size)/self.patches)
         
         self.ts = TimestepEmbedder(d_model)
         
         self.in_proj = MLP(in_channels*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
-        self.dit =  DiT_Transformer(d_model, num_blks, nhead, self.patches,
+        self.dit =  DiT_Transformer(d_model, num_blks, nhead, self.N,
                              dropout = 0.1, bias=False, report_params_count=True,
                              ffn_mult=4)
         self.final_layer = DiT_FinalLayer(d_model, patch, in_channels)
