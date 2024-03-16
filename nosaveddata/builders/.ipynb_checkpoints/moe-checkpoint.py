@@ -123,8 +123,8 @@ class SoftMoE_Combine_Output(nsd_Module):
         #self.dispatch_w_remove_grads.turn_off_grads()
         
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_xavier)]*num_experts)
-        self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_xavier)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_gpt)]*num_experts)
+        self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_gpt)
 
         params_count(self, 'Soft MoE')
     

@@ -35,7 +35,7 @@ class LayerNormNoBias(nn.Module):
 
     
 class Attention(nsd_Module):
-    def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
         self.W_q = nn.Linear(d_model, d_model, bias=bias)
@@ -54,9 +54,9 @@ class Attention(nsd_Module):
         k = self.W_k(k)
         v = self.W_v(v)
         
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         
@@ -73,7 +73,7 @@ class Attention(nsd_Module):
 
 
 class MemoryAttention(nsd_Module):
-    def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
         self.W_kv = nn.Linear(d_model, 2 * d_model, bias=bias)
@@ -105,9 +105,9 @@ class MemoryAttention(nsd_Module):
         
         
         
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
         
         
         
@@ -153,11 +153,11 @@ class MemoryAttention(nsd_Module):
         #k=torch.cat((shifted_k, k), 1)
         #v=torch.cat((shifted_v, v), 1)
         
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        k_read = k_read.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2)
-        v_read = v_read.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k_read = k_read.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2)
+        v_read = v_read.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2)
           
         
         # Causal Mask
@@ -225,19 +225,19 @@ class FFN(nn.Module):
     
 
 class GPT_Block(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4):
         super().__init__()
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.attn = Attention(d_model, nhead, bias, dropout)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
     def forward(self, x, is_causal=True):
         x_ln = self.ln_1(x)
         x = x + self.attn(x_ln, x_ln, x_ln, is_causal=is_causal)
-        print('attn', x.mean(), x.std())
+        
         x = x + self.mlp(self.ln_2(x))
-        print('ffn', x.mean(), x.std())
+        
         return x
     
     
@@ -336,12 +336,11 @@ class GPT_NLP(nsd_Module):
 
 
 
-class Transformer_Block_NoLN(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4, stochastic_depth=1):
+class Transformer_Block_NoLN(nsd_Module):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4, stochastic_depth=1):
         super().__init__()
-        self.stochastic_depth=stochastic_depth
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.attn = Attention(d_model, nhead, bias, dropout)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
@@ -349,26 +348,22 @@ class Transformer_Block_NoLN(nn.Module):
         #x = renormalize(x)
         keep_path = torch.ones(x.shape[0],device='cuda')*(self.stochastic_depth if self.training else 1)
         keep_path = torch.bernoulli(keep_path)[:,None,None]
+
+        x_ln = self.ln_1(x)
+        x = x + self.attn(x_ln, x_ln, x_ln, is_causal=is_causal)*keep_path
         
-        means, stds = 0, 0
-        means += x.mean()
-        stds += x.std()
-        #x_ln = self.ln_1(x)
-        x = x + self.attn(x, x, x, is_causal=is_causal)*keep_path
-        means += x.mean()
-        stds += x.std()
-        x = x + self.mlp(x)*keep_path
-        means += x.mean()
-        stds += x.std()
+        x = x + self.mlp(self.ln_2(x))*keep_path
+        
+        return x
 
-        return x, means/3, stds/3
-
-class Transformer_NoDATA(nsd_Module):
+class Transformer_NoDATA(nn.Module):
     def __init__(self, d_model, num_blks, nhead, seq_len,
-                 dropout = 0, bias=False, report_params_count=True,
-                 ffn_mult=4, scale_init=0, stochastic_prob=1):
+                 dropout = 0.1, bias=False, report_params_count=True,
+                 ffn_mult=4, stochastic_depth=1.0, scale_init=1):
         super().__init__()
-        if scale_init==0:
+        self.num_hiddens = d_model
+        self.scale_init=scale_init
+        if scale_init==1:
             self.scale_init=num_blks
 
 
@@ -376,73 +371,62 @@ class Transformer_NoDATA(nsd_Module):
 
         self.final_ln = LayerNormNoBias(d_model)
         self.start_dropout = nn.Dropout(dropout)
-        
+        self.seq_len = seq_len
+        self.num_blks=num_blks
 
         self.blks = nn.Sequential()
         for i in range(num_blks):
             self.blks.add_module("block"+str(i), Transformer_Block_NoLN(
                                 d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult,
-                                stochastic_depth = 1 - (i/num_blks) * stochastic_prob) )
-
+                                stochastic_depth=1-((1-stochastic_depth)*i/num_blks) ))
 
 
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
 
-        self.apply(init_xavier)
-        self.apply(self._init_weights)
+        self.apply(init_gpt)
+        #self.apply(self._init_weights)
 
-        for pn, p in self.named_parameters():
-            if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
-                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
         #for pn, p in self.named_parameters():
-        #    if pn.endswith('proj.weight'):
-        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        #    if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
+        #        torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
+        for pn, p in self.named_parameters():
+            if pn.endswith('proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
 
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
             print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
 
     def _init_weights(self, module):
-        
         if isinstance(module, nn.Embedding):
-            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.d_model))
+            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
             torch.nn.init.xavier_uniform_(module.weight, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
-        '''
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-                
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-    
-        elif isinstance(module, nn.LayerNorm):
-            nn.init.constant_(module.bias, 0)
-            nn.init.constant_(module.weight, 1.0)
-        '''
+        
+        
 
     def forward(self, X, is_causal=True):
 
         pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)[:X.shape[1]]
         X = self.start_dropout(X+pos_emb)
+        
 
-        means, stds = 0, 0
         for i, blk in enumerate(self.blks):
-            X, mean, std = blk(X, is_causal)
-            means += mean
-            stds += std
+            X = blk(X, is_causal)
+            
         X = self.final_ln(X)
-
-        return X, means/self.num_blks, stds/self.num_blks
+        
+        return X
     
     def no_pos(self, X, is_causal=True):
         X = self.start_dropout(X)
         
+        
         for i, blk in enumerate(self.blks):
-            X, _, _ = blk(X, is_causal)
-        X = self.final_ln(X)
+            X = blk(X, is_causal)
 
+        X = self.final_ln(X)
+        
         return X
     
     def masked(self, X, mask, is_causal=True):
@@ -452,12 +436,12 @@ class Transformer_NoDATA(nsd_Module):
         X = self.start_dropout(X+pos_emb)
         X = X.gather(1, mask)
         
-
         
         for i, blk in enumerate(self.blks):
-            X, _, _ = blk(X, is_causal)
-        X = self.final_ln(X)
+            X = blk(X, is_causal)
 
+        X = self.final_ln(X)
+        
         return X
 
 
@@ -471,10 +455,10 @@ def modulate(x, shift, scale):
 
 
 class DiT_Block(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, ffn_mult=4):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4):
         super().__init__()
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.attn = Attention(d_model, nhead, bias, dropout)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
         
@@ -516,21 +500,16 @@ class DiT_Transformer(nsd_Module):
         
         #nn.init.xavier_uniform_(self.pos_encoding[0].weight)
         
-        self.apply(init_xavier)
-        self.apply(self._init_weights)
+        self.apply(init_gpt)
+        self.init_weights()
         
         for pn, p in self.named_parameters():
-            if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
-                torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
-        
+            if pn.endswith('proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
-            print(f'DiT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
-        
-    def _init_weights(self, module):
-        if isinstance(module, nn.Embedding):
-            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.d_model))
-            torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*scale_init)).pow(-1/4))
+            print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
     
     def init_weights(self):
         
@@ -558,10 +537,10 @@ class DiT_Transformer(nsd_Module):
     
 
 class CrossAttention_Block(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False):
         super().__init__()
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, num_heads, bias, dropout)
+        self.attn = Attention(d_model, nhead, bias, dropout)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias)
 
@@ -664,11 +643,11 @@ class SpatialNorm(nn.Module):
     
     
 class ConvAttnBlock(nn.Module):
-    def __init__(self, in_channels, t_emb_dim=512, dropout=0, n_head=8):
+    def __init__(self, in_channels, t_emb_dim=512, dropout=0, nhead=8):
         super().__init__()
         self.in_channels = in_channels
         self.dropout = dropout
-        self.n_head = in_channels//n_head
+        self.nhead = in_channels//nhead
         
         self.norm = nn.GroupNorm(32, in_channels)
         
@@ -698,9 +677,9 @@ class ConvAttnBlock(nn.Module):
         q = self.q(h_)
         k = self.k(h_)
         v = self.v(h_)
-        q = q.contiguous().view(b, h*w, self.n_head, c//self.n_head).transpose(1, 2)
-        k = k.contiguous().view(b, h*w, self.n_head, c//self.n_head).transpose(1, 2)
-        v = k.contiguous().view(b, h*w, self.n_head, c//self.n_head).transpose(1, 2)
+        q = q.contiguous().view(b, h*w, self.nhead, c//self.nhead).transpose(1, 2)
+        k = k.contiguous().view(b, h*w, self.nhead, c//self.nhead).transpose(1, 2)
+        v = k.contiguous().view(b, h*w, self.nhead, c//self.nhead).transpose(1, 2)
 
         # compute attention
 

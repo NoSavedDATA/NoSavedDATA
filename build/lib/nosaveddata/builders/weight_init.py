@@ -86,7 +86,7 @@ def init_emb(module):
 
 def init_saving_variance(module, num_blks):
     
-    torch.nn.init.xavier_uniform_(module.weight, gain=torch.tensor(9*num_blks).pow(-1/4))
+    torch.nn.init.xavier_uniform_(module.weight, gain=torch.tensor(4*num_blks).pow(-1/4))
     if hasattr(module, 'bias'):
         if module.bias is not None:
             torch.nn.init.zeros_(module.bias)
@@ -102,7 +102,10 @@ def init_gpt(module):
     elif isinstance(module, nn.Embedding):
         torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
         #torch.nn.init.xavier_normal_(module.weight)
-
+    elif isinstance(module, nn.LayerNorm):
+        nn.init.constant_(module.bias, 0)
+        nn.init.constant_(module.weight, 1.0)
+        
 
 def init_proj(module):
     assert not isinstance(module, nn.Conv1d) and not isinstance(module, nn.Conv2d) and not isinstance(module, nn.Conv3d)
