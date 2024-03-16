@@ -383,15 +383,18 @@ class Transformer_NoDATA(nn.Module):
 
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
 
-        self.apply(init_gpt)
-        #self.apply(self._init_weights)
+        #self.apply(init_gpt)
+        #for pn, p in self.named_parameters():
+        #    if pn.endswith('proj.weight'):
+        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
 
+        self.apply(init_xavier)
+        
         #for pn, p in self.named_parameters():
         #    if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
         #        torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
-        for pn, p in self.named_parameters():
-            if pn.endswith('proj.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        #self.apply(self._init_weights)
+        
 
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
