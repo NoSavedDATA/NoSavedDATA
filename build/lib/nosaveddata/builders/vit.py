@@ -152,7 +152,7 @@ class ViT_IWM(nsd_Module):
         self.predictor_proj = MLP(self.d_encoder, out_hiddens=d_predictor, last_init=init_gpt) \
                               if d_predictor!=self.d_encoder else nn.Identity()
 
-        self.predictor = Transformer_NoDATA(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N,
+        self.predictor = Transformer_NoDATA(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N+1,
                  dropout = dropout, bias=bias, report_params_count=False,
                  ffn_mult=ffn_mult, scale_init=num_blks_predictor, stochastic_depth=stochastic_depth)
 
@@ -166,12 +166,12 @@ class ViT_IWM(nsd_Module):
     def hard_reset(self, new_network, alpha):
         network_ema(self.encoder, new_network.encoder, alpha)
 
-        network_ema(self.predictor_proj, new_network.predictor_proj, 0.3)
-        network_ema(self.predictor, new_network.predictor, 0.3)
+        network_ema(self.predictor_proj, new_network.predictor_proj, alpha)
+        network_ema(self.predictor, new_network.predictor, alpha)
 
-        network_ema(self.mask, new_network.mask, 0.3)
-        network_ema(self.mask_pos_encoding, new_network.mask_pos_encoding, 0.3)
-        network_ema(self.mask_mlp, new_network.mask_mlp, 0.3)
+        network_ema(self.mask, new_network.mask, alpha)
+        network_ema(self.mask_pos_encoding, new_network.mask_pos_encoding, alpha)
+        network_ema(self.mask_mlp, new_network.mask_mlp, alpha)
 
     def get_random_mask(self, X, augmentations):
         B, T, D = X.shape
@@ -243,7 +243,7 @@ class ViT_IWM(nsd_Module):
                 
                 values, idx = win.sort(descending=True)
 
-                idx = idx[:,:4]
+                idx = idx[:,:self.N//4]
                 
                 #min_m = min(min_m, len(values[0].nonzero()))
                 wins.append(idx)

@@ -141,7 +141,51 @@ class Inverse_Residual_Block(nn.Module):
         Y = self.conv(X)
         Y = Y+self.proj(X)
         return Y
+
+
+class IMPALA_YY(nn.Module):
+    def __init__(self, first_channels=12, scale_width=1, norm=True, init=init_relu, act=nn.SiLU()):
+        super().__init__()
+        self.norm=norm
+        self.init=init
+        self.act =act
+
+        self.yin = self.get_yin(1, 16*scale_width, 32*scale_width)
+        
+        self.yang = self.get_yang(first_channels, 16*scale_width)
+                                 
+        self.head = nn.Sequential(self.get_yang(16*scale_width, 32*scale_width),
+                                  self.get_yang(32*scale_width, 32*scale_width, last_relu=True))
+        
+        params_count(self, 'IMPALA ResNet')
+
+    def get_yin(self, in_hiddens, hiddens, out_hiddens):
+        blocks = nn.Sequential(DQN_Conv(in_hiddens, hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
+                               Residual_Block(hiddens, hiddens, norm=self.norm, act=self.act, init=self.init),
+                               #DQN_Conv(hiddens, out_hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
+                               #Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init),
+                               #Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init)
+                              )
+        return blocks          
+        
+    def get_yang(self, in_hiddens, out_hiddens, last_relu=False):
+        
+        blocks = nn.Sequential(DQN_Conv(in_hiddens, out_hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
+                               Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init),
+                               Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init, out_act=self.act if last_relu else nn.Identity())
+                              )
+        
+        return blocks
     
+    def forward(self, X):
+
+        y = self.yin(X[:,-3:].mean(-3)[:,None])
+        x = self.yang(X)
+        
+        #X = x*(1-y) + x + y
+        X = 0.67*x + 0.33*y
+        
+        return self.head(X)
 
 
 class IMPALA_Resnet(nn.Module):
