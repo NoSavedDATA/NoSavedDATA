@@ -162,6 +162,7 @@ class IMPALA_YY(nn.Module):
     def get_yin(self, in_hiddens, hiddens, out_hiddens):
         blocks = nn.Sequential(DQN_Conv(in_hiddens, hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
                                Residual_Block(hiddens, hiddens, norm=self.norm, act=self.act, init=self.init),
+                               Residual_Block(hiddens, hiddens, norm=self.norm, act=self.act, init=self.init),
                                #DQN_Conv(hiddens, out_hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
                                #Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init),
                                #Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init)
