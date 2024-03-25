@@ -34,6 +34,7 @@ nosaveddata/nsd_utils/cv.py
 nosaveddata/nsd_utils/dreamer.py
 nosaveddata/nsd_utils/einstein.py
 nosaveddata/nsd_utils/networks.py
+nosaveddata/nsd_utils/nsd_csv.py
 nosaveddata/nsd_utils/save_hypers.py
 nosaveddata/nsd_utils/scheduler.py
 nosaveddata/nsd_utils/temperature.py
