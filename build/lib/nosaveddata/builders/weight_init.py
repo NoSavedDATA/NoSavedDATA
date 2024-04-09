@@ -41,6 +41,7 @@ def init_zeros(module):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
+
 def init_sigmoid(module):
     #print(f"The init sigmoid was only tested by the package's author at the CfC.")
     if type(module) in (nn.Linear, nn.Conv2d, nn.Conv1d, nn.Conv3d):
@@ -132,6 +133,18 @@ def init_cnn(module):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
+def init_partial_dirac(module):
+    if type(module) in (nn.Conv2d, nn.Conv1d, nn.Conv3d):
+        w = module.weight.data
+        
+        nn.init.dirac_(module.weight[:w.shape[1]])
+        nn.init.xavier_uniform_(module.weight[w.shape[1]:], gain=1)
+
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+    if type(module) == nn.Linear:
+        print(f"ERROR: ONLY CONVOLUTIONS ARE SUPPORTED BY THE DIRAC INITIALIZATION.")
+
 def init_dreamer_normal(module):
     if type(module) == nn.Linear or type(module) == nn.Conv2d or type(module) == nn.Conv1d or type(module) == nn.Conv3d:
 
@@ -177,3 +190,30 @@ def init_proj2d(module):
         
         if module.bias is not None:
             nn.init.zeros_(module.bias)
+
+
+'''WHITENED LAYERS'''
+
+def get_patches(x, patch_shape):
+    c, (h, w) = x.shape[1], patch_shape
+    
+    return x.unfold(2,h,1).unfold(3,w,1).transpose(1,3).reshape(-1,c,h,w).float()
+
+def get_whitening_parameters(patches):
+    n,c,h,w = patches.shape
+    patches_flat = patches.view(n, -1)
+    est_patch_covariance = (patches_flat.T @ patches_flat) / n
+    
+    eigenvalues, eigenvectors = torch.linalg.eigh(est_patch_covariance, UPLO='U')
+    
+    return eigenvalues.flip(0).view(-1, 1, 1, 1), eigenvectors.T.reshape(c*h*w,c,h,w).flip(0)
+
+def init_whitening_conv(layer, train_set, eps=5e-4):
+    patches = get_patches(train_set, patch_shape=layer.weight.data.shape[2:])
+    
+    eigenvalues, eigenvectors = get_whitening_parameters(patches)
+    
+    eigenvectors_scaled = eigenvectors / torch.sqrt(eigenvalues + eps)
+    
+    layer.weight.data[:] = torch.cat((eigenvectors_scaled, -eigenvectors_scaled))
+    layer.weight.requires_grad=False

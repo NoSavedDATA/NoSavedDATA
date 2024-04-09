@@ -13,6 +13,8 @@ from .transformer import Attention, FFN, LayerNormNoBias, GPT_Block
 
 
 
+
+
 class SoftMoE(nsd_Module):
     def __init__(self, hiddens, num_experts=8, num_slots=1, act=nn.SiLU()):
         super().__init__()
@@ -40,6 +42,13 @@ class SoftMoE(nsd_Module):
         y = combine_w@y
 
         return y
+
+
+
+
+
+
+
 
 class SoftMoE_Projection(nsd_Module):
     def __init__(self, hiddens, projected_dim, num_experts=8, num_slots=1, act=nn.SiLU()):

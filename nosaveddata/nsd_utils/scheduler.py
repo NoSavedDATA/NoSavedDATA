@@ -43,7 +43,21 @@ class WarmUpLR(_LRScheduler):
             super(WarmUpLR, self).step()
     """
     
-    
+
+def Triangle_Scheduler(optimizer, steps, start=0.2, end=0.07, peak=0.23):
+    def triangle(steps, start, end, peak):
+        xp = torch.tensor([0, int(peak * steps), steps])
+        fp = torch.tensor([start, 1, end])
+        x = torch.arange(1+steps)
+        m = (fp[1:] - fp[:-1]) / (xp[1:] - xp[:-1])
+        b = fp[:-1] - (m * xp[:-1])
+        indices = torch.sum(torch.ge(x[:, None], xp[None, :]), 1) - 1
+        indices = torch.clamp(indices, 0, len(m) - 1)
+        return m[indices] * x + b[indices]
+    lr_schedule = triangle(steps, start, end, peak)
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda i: lr_schedule[i])
+
+
     
 class Sophia_WarmupScheduler(_LRScheduler):
     def __init__(self, optimizer, warmup_steps, min_lr, max_lr, min_rho, max_rho, after_scheduler_steps, last_epoch=-1):

@@ -8,6 +8,7 @@ from .einstein import *
 
 from .save_hypers import *
 
+from .optim import *
 from .scheduler import *
 
 from .bbf import *
