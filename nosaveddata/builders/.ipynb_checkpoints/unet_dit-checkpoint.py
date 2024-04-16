@@ -12,7 +12,7 @@ class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
     """
-    def __init__(self, hidden_size, frequency_embedding_size=256):
+    def __init__(self, frequency_embedding_size, hidden_size):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
@@ -79,7 +79,7 @@ class UNet_DiT(nsd_Module):
         
         self.N = int(np.prod(img_size)/self.patches)
         
-        self.ts = TimestepEmbedder(d_model)
+        self.ts = TimestepEmbedder(256, d_model)
         
         self.in_proj = MLP(in_channels*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
@@ -102,8 +102,10 @@ class UNet_DiT(nsd_Module):
         X = X.transpose(-2,-1).contiguous().view(-1, self.first_channel,*self.img_size)
         return X
     
-    def forward(self, x, t):
-        c = self.ts(t)
+    def forward(self, x, t, c):
+        t = self.ts(t)
+
+        c = t+c
         
         x = self.patchify(x)
         x = self.in_proj(x)
@@ -162,27 +164,54 @@ def UNet_DiT_XL_2(**kwargs):
 
 
 
+class DiT_FinalLayer_1D(nn.Module):
+    def __init__(self, hidden_size, out_channels):
+        super().__init__()
+        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(hidden_size, out_channels, bias=True)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+        )
+        self.linear.apply(init_gpt)
+        self.adaLN_modulation.apply(init_zeros)
+        
+        
+
+    def forward(self, x, c):
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+        x = modulate(self.norm_final(x), shift, scale)
+        x = self.linear(x)
+        return x
+
 class UNet_DiT_1D(nn.Module):
     def __init__(self, in_channels, d_model, num_blks, nhead, seq_len,
                              dropout = 0.1, bias=False, report_params_count=True,
-                             ffn_mult=4):
+                             ffn_mult=4,
+                             proj=True):
         super().__init__()
-        self.first_channel=in_channels
         
-        self.ts = TimestepEmbedder(d_model)
+        self.ts = TimestepEmbedder(seq_len, d_model)
         
-        self.in_proj = MLP(in_channels, out_hiddens=d_model, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        self.in_proj = MLP(in_channels, out_hiddens=d_model, last_init=init_xavier) if (in_channels!=d_model and proj) else nn.Identity()
         
         self.dit =  DiT_Transformer(d_model, num_blks, nhead, seq_len,
-                             dropout = 0.1, bias=False, report_params_count=True,
+                             dropout = 0.1, bias=False, report_params_count=False,
                              ffn_mult=4)
         
-        self.out_proj = MLP(d_model, out_hiddens=in_channels, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
-        
+        #self.out_proj = MLP(d_model, out_hiddens=in_channels, last_init=init_xavier) if in_channels!=d_model else nn.Identity()
+        self.out_proj = DiT_FinalLayer_1D(d_model, in_channels) if (in_channels!=d_model and proj) else nn.Identity()
+
     
-    def forward(self, x, t):
-        c = self.ts(t)
+        if report_params_count:
+            params_to_count = [p for p in self.parameters() if p.requires_grad]
+            print(f'UNet DIT Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
+    
+    def forward(self, x, t, c):
+        t = self.ts(t)
+        c = t+c
+        
         x = self.in_proj(x)
         x = self.dit(x, c)
-        x = self.out_proj(x)
+        x = self.out_proj(x, c)
         return x

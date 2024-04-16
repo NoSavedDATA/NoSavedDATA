@@ -188,7 +188,7 @@ class IMPALA_YY(nsd_Module):
 
 
 class IMPALA_Resnet(nsd_Module):
-    def __init__(self, first_channels=12, scale_width=1, norm=True, init=init_relu, act=nn.SiLU()):
+    def __init__(self, first_channels=12, scale_width=1, norm=True, init=init_relu, act=nn.SiLU(), bias=True):
         super().__init__()
         
         self.cnn = nn.Sequential(self.get_block(first_channels, 16*scale_width),
@@ -198,9 +198,9 @@ class IMPALA_Resnet(nsd_Module):
         
     def get_block(self, in_hiddens, out_hiddens, last_relu=False):
         
-        blocks = nn.Sequential(DQN_Conv(in_hiddens, out_hiddens, 3, 1, 1, max_pool=True, act=self.act, norm=self.norm, init=self.init),
-                               Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init),
-                               Residual_Block(out_hiddens, out_hiddens, norm=self.norm, act=self.act, init=self.init, out_act=self.act if last_relu else nn.Identity())
+        blocks = nn.Sequential(DQN_Conv(in_hiddens, out_hiddens, 3, 1, 1, max_pool=True, bias=self.bias, act=self.act, norm=self.norm, init=self.init),
+                               Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init),
+                               Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init, out_act=self.act if last_relu else nn.Identity())
                               )
         
         return blocks

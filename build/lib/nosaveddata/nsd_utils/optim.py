@@ -12,6 +12,7 @@ class Lookahead:
         decay = self.sched[step].item()
         if step%self.k==0:
             for ema_param, net_param in zip(self.net_ema.values(), net.state_dict().values()):
+                #ema_param.mul_(decay).lerp_(net_param, 1-decay)
                 ema_param.lerp_(net_param, 1-decay)
                 net_param.copy_(ema_param)
                 

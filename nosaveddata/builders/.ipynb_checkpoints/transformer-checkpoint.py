@@ -450,10 +450,12 @@ class Transformer_NoDATA(nn.Module):
 
 
 
-def modulate(x, shift, scale):
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
     
 def modulate(x, shift, scale):
+    # x (B, T, D)
+    # shift (B, D)
+    # scale (B, D)
+    
     return x * (1 + scale[:,None]) + shift[:,None]
 
 
@@ -473,11 +475,11 @@ class DiT_Block(nn.Module):
         
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        #x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
-        x_ln = modulate(x, shift_msa, scale_msa)
+        x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
+        #x_ln = modulate(x, shift_msa, scale_msa)
         x = x + gate_msa[:,None] * self.attn(x_ln, x_ln, x_ln, is_causal=False)
-        #x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
-        x = x + gate_mlp[:,None] * self.mlp(modulate(x, shift_mlp, scale_mlp))
+        x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
+        #x = x + gate_mlp[:,None] * self.mlp(modulate(x, shift_mlp, scale_mlp))
         return x
     
     
@@ -528,6 +530,7 @@ class DiT_Transformer(nsd_Module):
         
         pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
+        
         X = self.start_dropout(X+pos_emb)
 
         for i, blk in enumerate(self.blks):
