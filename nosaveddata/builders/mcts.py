@@ -17,9 +17,6 @@ class MCTS_Node(nsd_Module):
 
         self.choosen_action = torch.tensor(-1, device='cuda', dtype=torch.long)
         
-        
-
-    
     def get_stats(self):
 
         return self.Q, self.z, self.p, self.n, self.reward, self.choosen_action
