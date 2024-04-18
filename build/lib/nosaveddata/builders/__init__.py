@@ -5,6 +5,8 @@ from .mlp import *
 from .cfc import *
 from .dnc import *
 
+from .mcts import *
+
 from .resnet import *
 from .vit import *
 from .token_learner import *

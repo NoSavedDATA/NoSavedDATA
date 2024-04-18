@@ -27,8 +27,8 @@ class Quantizer1d(nn.Module):
         x_norm = F.normalize(x, 2, dim=-1, eps=1e-5)
         quant_norm = F.normalize(quant_out, 2, dim=-1, eps=1e-5)
         
-        commmitment_loss = ((quant_norm.detach() - x_norm) ** 2).mean((1,2))
-        codebook_loss = ((quant_norm - x_norm.detach()) ** 2).mean((1,2))
+        commmitment_loss = ((quant_norm.detach() - x_norm) ** 2).sum((1,2))
+        codebook_loss = ((quant_norm - x_norm.detach()) ** 2).sum((1,2))
         quantize_losses = {
             'codebook_loss' : codebook_loss,
             'commitment_loss' : commmitment_loss
@@ -47,8 +47,8 @@ class Quantizer1d(nn.Module):
         x_norm = F.normalize(x, 2, dim=-1, eps=1e-5)
         quant_norm = F.normalize(quant_out, 2, dim=-1, eps=1e-5)
         
-        commmitment_loss = ((quant_norm.detach() - x_norm) ** 2).mean((1,2))
-        codebook_loss = ((quant_norm - x_norm.detach()) ** 2).mean((1,2))
+        commmitment_loss = ((quant_norm.detach() - x_norm) ** 2).sum((1,2))
+        codebook_loss = ((quant_norm - x_norm.detach()) ** 2).sum((1,2))
         quantize_losses = {
             'codebook_loss' : codebook_loss,
             'commitment_loss' : commmitment_loss
