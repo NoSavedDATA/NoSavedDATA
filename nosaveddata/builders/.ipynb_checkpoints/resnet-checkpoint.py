@@ -42,7 +42,7 @@ class DQN_CNN(nn.Module):
 
 
 
-        
+'''
 class Residual_Block(nn.Module):
     def __init__(self, in_channels, channels, stride=1, act=nn.SiLU(), out_act=nn.SiLU(), norm=True, init=init_relu, bias=True):
         super().__init__()
@@ -73,7 +73,40 @@ class Residual_Block(nn.Module):
         Y = self.conv(X)
         Y = Y+self.proj(X)
         return Y
+'''
 
+
+class Residual_Block(nn.Module):
+    def __init__(self, in_channels, channels, stride=1, act=nn.SiLU(), out_act=nn.SiLU(), norm=True, init=init_xavier, bias=True):
+        super().__init__()
+        
+        
+
+        conv1 = nn.Sequential(nn.Conv2d(in_channels, channels, kernel_size=3, padding=1,
+                                            stride=stride, bias=bias),
+                              (nn.GroupNorm(32, channels, eps=1e-6) if channels%32==0 else nn.BatchNorm2d(channels, eps=1e-6)) if norm else nn.Identity(),
+                              act)
+        conv2 = nn.Sequential(nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=bias),
+                              (nn.GroupNorm(32, channels, eps=1e-6) if channels%32==0 else nn.BatchNorm2d(channels, eps=1e-6)) if norm else nn.Identity(),
+                              out_act)
+
+        conv1.apply(init)
+        conv2.apply(init if out_act!=nn.Identity() else init_xavier)
+        
+        self.conv = nn.Sequential(conv1, conv2)
+        
+        self.proj=nn.Identity()
+        if stride>1 or in_channels!=channels:
+            self.proj = nn.Conv2d(in_channels, channels, kernel_size=3, padding=1,
+                        stride=stride)
+        
+        self.proj.apply(init_proj2d)
+        self.out_act = out_act
+        
+    def forward(self, X):
+        Y = self.conv(X)
+        return Y+self.proj(X)
+    
 
 class ConvNeXt_Block(nn.Module):
     def __init__(self, in_channels, channels, scale=4, stride=1, act=nn.GELU(), norm=True, init=init_relu):
