@@ -199,7 +199,6 @@ class EfficientZero(nsd_Module):
         
         
         #q, action = self.q_head(X)
-        print('AC IN', z.shape)
         logits, probs, value_probs = self.ac(z)
         
         z_proj_pred, reward_pred = self.get_transition(z[:,0][:,None], y_action)
