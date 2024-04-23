@@ -60,7 +60,7 @@ class RewardPred(nsd_Module):
         self.lstm = nn.LSTMCell(in_hiddens, hiddens)
         self.norm_relu = nn.Sequential(nn.BatchNorm1d(hiddens))
         
-        self.mlp = MLP_LayerNorm(hiddens, bottleneck, out_dim, layers=2, in_act=act, init=init_xavier, last_init=init_zeros)
+        self.mlp = MLP_LayerNorm(hiddens, bottleneck, out_dim, layers=2, in_act=act, init=init_xavier, last_init=init_zeros, out_act=nn.Softmax(-1))
         
     def forward(self, x):
         bs, seq = x.shape[:2]
@@ -117,6 +117,7 @@ class ActorCritic(nsd_Module):
         
     def forward(self, x):
         bs, seq = x.shape[:2]
+        
         x = self.residual(x.view(-1, *x.shape[-3:]))
         
         logits = self.policy(x).view(bs, seq, -1)
@@ -125,14 +126,26 @@ class ActorCritic(nsd_Module):
         value_probs = self.value(x).view(bs, seq, -1)
         
         return logits, probs, value_probs
-    
+        
+    def one_step(self, x):
+        bs = x.shape[0]
+        
+        x = self.residual(x.view(-1, *x.shape[-3:]))
+        
+        logits = self.policy(x).view(bs, -1)
+        probs = F.softmax(logits, -1)
+        
+        value_probs = self.value(x).view(bs, -1)
+        
+        return logits, probs, value_probs
         
     
 class EfficientZero(nsd_Module):
-    def __init__(self, n_actions, hiddens=512, mlp_layers=1, scale_width=4,
-                 n_atoms=51, Vmin=-10, Vmax=10):
+    def __init__(self, n_actions, hiddens=512, mlp_layers=1, scale_width=1,
+                 n_atoms=51, Vmin=-20, Vmax=20):
         super().__init__()
         self.support = torch.linspace(Vmin, Vmax, n_atoms).cuda()
+        self.reward_support = torch.linspace(-2, 2, n_atoms).cuda()
         
         self.hiddens=hiddens
         self.scale_width=scale_width
@@ -176,7 +189,13 @@ class EfficientZero(nsd_Module):
         #return q, action, X[:,1:].clone().detach(), z_pred
         return z_proj, z_proj_pred, reward_pred, logits, probs, value_probs
     
-
+    def get_root(self, X):
+        z = self.encode_z(X)
+        logits, probs, value_probs = self.ac(z)
+        
+        return z.squeeze(1), logits.squeeze(1), probs.squeeze(1), value_probs.squeeze(1)
+        #return z, logits, probs, value_probs
+        
     def encode(self, X):
         batch, seq = X.shape[:2]
         self.batch = batch
@@ -184,7 +203,9 @@ class EfficientZero(nsd_Module):
         X = self.encoder_cnn(X.contiguous().view(self.batch*self.seq, *(X.shape[2:])))
         X = X.contiguous().view(self.batch, self.seq, *X.shape[-3:])
         z = X.clone()
+        
         X = X.flatten(-3,-1)
+        
         X = self.projection(X)
         return X, z
     
@@ -194,8 +215,18 @@ class EfficientZero(nsd_Module):
         self.seq = seq
         X = self.encoder_cnn(X.contiguous().view(self.batch*self.seq, *(X.shape[2:])))
         X = X.contiguous().view(self.batch, self.seq, *X.shape[-3:])
-        
+
         return X
+
+    def env_step(self, X):
+        with torch.no_grad():
+            z = self.encode_z(X)
+            _, probs, _ = self.ac(z)
+    
+    
+            #return probs.argmax(-1)
+            return torch.multinomial(probs.squeeze(), 1) 
+            
     
     def get_zero_ht(self, batch_size):
         ht = torch.zeros(batch_size, self.hiddens, device='cuda')
@@ -203,6 +234,7 @@ class EfficientZero(nsd_Module):
         return (ht, ct)
     
     def transition_one_step(self, z, action, ht):
+        
         z = z.contiguous().view(-1, *z.shape[-3:])
         
         action_one_hot = (
@@ -221,16 +253,17 @@ class EfficientZero(nsd_Module):
         #print('one step', z.shape, action.shape)
         z_pred = torch.cat( (z, action), 1)
         z_pred = self.transition(z_pred)
+
         
-        #print('one step z transition', z.shape)
         
         
         reward_pred, ht = self.reward_pred.transition_one_step(z_pred, ht)
+
+        logits, probs, value_probs = self.ac.one_step(z_pred)
         
-        #print('one step z_pred reward_pred', z_pred.shape, reward_pred.shape)
 
         
-        return z_pred, reward_pred, ht
+        return z_pred, logits, probs, value_probs, reward_pred, ht
     
     def get_transition(self, z, action):
         z = z.contiguous().view(-1, *z.shape[-3:])
@@ -276,3 +309,29 @@ class EfficientZero(nsd_Module):
         z_proj_pred = self.prediction(z_proj_pred)
         
         return z_proj_pred, reward_pred
+
+    
+    def evaluate(self, X):
+        z = self.encode_z(X)
+        values = self.ac(z)[-1]
+        values = (values*symexp(self.support)).sum(-1)
+        
+        return values
+        
+    
+    def network_ema(self, rand_network, target_network, alpha=0.5):
+        for param, param_target in zip(rand_network.parameters(), target_network.parameters()):
+            param_target.data = alpha * param_target.data + (1 - alpha) * param.data.clone()
+
+    def hard_reset(self, random_model, alpha=0.5):
+        with torch.no_grad():
+            
+            self.network_ema(random_model.encoder_cnn, self.encoder_cnn, alpha)
+            self.network_ema(random_model.transition, self.transition, alpha)
+
+            self.network_ema(random_model.projection, self.projection, 0)
+            self.network_ema(random_model.prediction, self.prediction, 0)
+            self.network_ema(random_model.reward_mlp, self.reward_mlp, 0)
+
+            self.network_ema(random_model.a, self.a, 0)
+            self.network_ema(random_model.v, self.v, 0)

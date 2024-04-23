@@ -5,7 +5,7 @@ import inspect
 # Hyper Parameters
 # automatically saves all arguments of the inherited class __init__
 class Hypers: # Sorcery
-    def __init__(self, max_depth=2, **kwargs):
+    def __init__(self, max_depth=3, **kwargs):
         super().__init__(**kwargs)
         self.save_hypers(max_depth)
     
