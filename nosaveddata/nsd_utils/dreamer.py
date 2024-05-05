@@ -23,7 +23,8 @@ def symexp(x, scale=1):
     return torch.sign(x)*(torch.exp(x.abs()/scale)-1)
 
 
-def two_hot_no_symlog(labels, num_buckets, boundaries, scale=1):
+def two_hot_no_symlog(labels, boundaries, scale=1):
+    num_buckets = boundaries.shape[-1]
     sl=labels
     buckets=torch.bucketize(sl, boundaries)
     
@@ -39,7 +40,8 @@ def two_hot_no_symlog(labels, num_buckets, boundaries, scale=1):
 
     return twohot
 
-def two_hot_view_no_symlog(labels, num_buckets, boundaries, scale=1):
+def two_hot_view_no_symlog(labels, boundaries, scale=1):
+    num_buckets = boundaries.shape[-1]
     labels=labels.clone()
     labels=labels.view(-1)
     
@@ -59,7 +61,8 @@ def two_hot_view_no_symlog(labels, num_buckets, boundaries, scale=1):
     
     return twohot.contiguous()
 
-def two_hot(labels, num_buckets, boundaries, scale=1):
+def two_hot(labels, boundaries, scale=1):
+    num_buckets = boundaries.shape[-1]
     sl=symlog(labels,scale)
     buckets=torch.bucketize(sl, boundaries)
     
@@ -76,7 +79,8 @@ def two_hot(labels, num_buckets, boundaries, scale=1):
     return twohot
 
 
-def two_hot_view(labels, num_buckets, boundaries, scale=1):
+def two_hot_view(labels, boundaries, scale=1):
+    num_buckets = boundaries.shape[-1]
     labels=labels.clone()
     labels=labels.view(-1)
     
