@@ -46,7 +46,7 @@ class WarmUp_Linear(_LRScheduler):
                         (self.last_epoch / self.warmup_steps) 
                         for base_lr in self.base_lrs]
                         
-        return [self.min_lr for base_lr in self.base_lrs]
+        return [self.max_lr for base_lr in self.base_lrs]
     
     
     """

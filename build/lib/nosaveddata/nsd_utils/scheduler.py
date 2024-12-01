@@ -26,6 +26,27 @@ class WarmUpLR(_LRScheduler):
                 (1 + math.cos(math.pi * (self.last_epoch-self.warmup_steps) / self.after_scheduler_steps)) / 2
                 for base_lr in self.base_lrs]
         return [self.min_lr for base_lr in self.base_lrs]
+
+
+
+class WarmUp_Linear(_LRScheduler):
+    def __init__(self, optimizer, warmup_steps, min_lr, max_lr, after_scheduler_steps, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.after_scheduler_steps = after_scheduler_steps
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.T_max = warmup_steps + after_scheduler_steps
+        
+        super().__init__(optimizer, last_epoch=last_epoch)
+        
+        
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            return [self.min_lr + (self.max_lr - self.min_lr) * 
+                        (self.last_epoch / self.warmup_steps) 
+                        for base_lr in self.base_lrs]
+                        
+        return [self.max_lr for base_lr in self.base_lrs]
     
     
     """
