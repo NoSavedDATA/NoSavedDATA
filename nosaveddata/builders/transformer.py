@@ -481,6 +481,11 @@ class DiT_Block(nn.Module):
         x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
         #x = x + gate_mlp[:,None] * self.mlp(modulate(x, shift_mlp, scale_mlp))
         return x
+
+    def forward_no_dit(self, x):
+        x_ln = self.ln_1(x)
+        x = x + self.attn(x_ln, x_ln, x_ln, is_causal=False)
+        return x + self.mlp(self.ln_2(x))
     
     
 class DiT_Transformer(nsd_Module):
@@ -539,7 +544,22 @@ class DiT_Transformer(nsd_Module):
         return self.final_ln(X)
     
 
+   def forward_no_dit(self, X):
+        # Input:
+        # X e (B, T, D)
+        # c e (B, D)
+        
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
+        
+        X = self.start_dropout(X+pos_emb)
+
+        for i, blk in enumerate(self.blks):
+            X = blk.forward_no_dit(X)
+            
+        return self.final_ln(X)
     
+     
     
 
 class CrossAttention_Block(nn.Module):
