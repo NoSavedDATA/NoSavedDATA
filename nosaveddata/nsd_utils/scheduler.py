@@ -5,7 +5,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 #scheduler = WarmUpLR(optimizer, warmup_steps=0, min_lr=js['lr_rl']*0.05, max_lr=js['lr_rl'],
 #                     after_scheduler_steps=1e6)
 
-class WarmUpLR(_LRScheduler):
+class WarmUp_Cosine(_LRScheduler):
     def __init__(self, optimizer, warmup_steps, min_lr, max_lr, after_scheduler_steps, last_epoch=-1):
         self.warmup_steps = warmup_steps
         self.after_scheduler_steps = after_scheduler_steps

@@ -480,11 +480,12 @@ class DiT_Block(nn.Module):
         
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
+        
         x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
-        #x_ln = modulate(x, shift_msa, scale_msa)
-        x = x + gate_msa[:,None] * self.attn(x_ln, x_ln, x_ln, is_causal=False)
-        x = x + gate_mlp[:,None] * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
-        #x = x + gate_mlp[:,None] * self.mlp(modulate(x, shift_mlp, scale_mlp))
+        
+        x = x + (1+gate_msa[:,None]) * self.attn(x_ln, x_ln, x_ln, is_causal=False)
+        x = x + (1+gate_mlp[:,None]) * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
+        
         return x
 
     def forward_no_dit(self, x):
@@ -549,7 +550,7 @@ class DiT_Transformer(nsd_Module):
         return self.final_ln(X)
     
 
-   def forward_no_dit(self, X):
+    def forward_no_dit(self, X):
         # Input:
         # X e (B, T, D)
         # c e (B, D)
