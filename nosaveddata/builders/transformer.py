@@ -471,6 +471,11 @@ class DiT_Block(nn.Module):
             nn.SiLU(),
             nn.Linear(d_model, 6 * d_model, bias=True)
         )
+
+        self.ln_1.apply(init_gpt)
+        self.attn.apply(init_gpt)
+        self.ln_2.apply(init_gpt)
+        self.mlp.apply(init_gpt)
         self.adaLN_modulation.apply(init_zeros)
         
     def forward(self, x, c):
@@ -544,7 +549,7 @@ class DiT_Transformer(nsd_Module):
         return self.final_ln(X)
     
 
-   def forward_no_dit(self, X):
+    def forward_no_dit(self, X):
         # Input:
         # X e (B, T, D)
         # c e (B, D)
