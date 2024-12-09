@@ -4,8 +4,10 @@ import torch.nn.functional as F
 
 from .weight_init import *
 from .transformer import  ConvAttnBlock
+from .film import FiLM_2dBlock
 from ..nsd_utils.networks import params_count
 from ..nsd_utils.save_hypers import nsd_Module
+
 
 import numpy as np
 
@@ -42,7 +44,7 @@ class DQN_CNN(nn.Module):
 
 
 
-        
+'''
 class Residual_Block(nn.Module):
     def __init__(self, in_channels, channels, stride=1, act=nn.SiLU(), out_act=nn.SiLU(), norm=True, init=init_relu, bias=True):
         super().__init__()
@@ -73,7 +75,40 @@ class Residual_Block(nn.Module):
         Y = self.conv(X)
         Y = Y+self.proj(X)
         return Y
+'''
 
+
+class Residual_Block(nn.Module):
+    def __init__(self, in_channels, channels, stride=1, act=nn.SiLU(), out_act=nn.SiLU(), norm=True, init=init_xavier, bias=True):
+        super().__init__()
+        
+        
+
+        conv1 = nn.Sequential(nn.Conv2d(in_channels, channels, kernel_size=3, padding=1,
+                                            stride=stride, bias=bias),
+                              (nn.GroupNorm(32, channels, eps=1e-6) if channels%32==0 else nn.BatchNorm2d(channels, eps=1e-6)) if norm else nn.Identity(),
+                              act)
+        conv2 = nn.Sequential(nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=bias),
+                              (nn.GroupNorm(32, channels, eps=1e-6) if channels%32==0 else nn.BatchNorm2d(channels, eps=1e-6)) if norm else nn.Identity(),
+                              out_act)
+
+        conv1.apply(init)
+        conv2.apply(init if out_act!=nn.Identity() else init_xavier)
+        
+        self.conv = nn.Sequential(conv1, conv2)
+        
+        self.proj=nn.Identity()
+        if stride>1 or in_channels!=channels:
+            self.proj = nn.Conv2d(in_channels, channels, kernel_size=3, padding=1,
+                        stride=stride)
+        
+        self.proj.apply(init_proj2d)
+        self.out_act = out_act
+        
+    def forward(self, X):
+        Y = self.conv(X)
+        return Y+self.proj(X)
+    
 
 class ConvNeXt_Block(nn.Module):
     def __init__(self, in_channels, channels, scale=4, stride=1, act=nn.GELU(), norm=True, init=init_relu):
@@ -207,6 +242,43 @@ class IMPALA_Resnet(nsd_Module):
         
     def forward(self, X):
         return self.cnn(X)
+
+
+class IMPALA_FiLM(nsd_Module):
+    def __init__(self, first_channels=12, scale_width=1, norm=True, init=init_relu, act=nn.SiLU(), 
+                 condition_dim=256, bias=True):
+        super().__init__()
+
+        
+        self.cnn = [self.get_block(first_channels, 16*scale_width),
+                    self.get_block(16*scale_width, 32*scale_width),
+                    self.get_block(32*scale_width, 32*scale_width, last_relu=True)]
+        params_count(self, 'IMPALA ResNet')
+        
+    def get_block(self, in_hiddens, out_hiddens, last_relu=False):
+        
+        blocks = [nn.ModuleList([DQN_Conv(in_hiddens, out_hiddens, 3, 1, 1, max_pool=True, bias=self.bias, act=self.act, norm=self.norm, init=self.init).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()]),
+                               nn.ModuleList([Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()]),
+                               nn.ModuleList([Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init, out_act=self.act if last_relu else nn.Identity()).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()])
+                ]
+        
+        return blocks
+        
+    def forward(self, X):
+        for block in self.cnn:
+            for subblock in block:
+                X = subblock[0](X)
+        return X
+
+    def film(self, X, c):
+        for block in self.cnn:
+            for subblock in block:
+                X = subblock[0](X)
+                X = subblock[1](X, c)
+        return X
 
 
 class IMPALA_Resnet_Whitened(nsd_Module):

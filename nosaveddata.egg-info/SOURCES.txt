@@ -10,6 +10,7 @@ nosaveddata.egg-info/top_level.txt
 nosaveddata/builders/__init__.py
 nosaveddata/builders/cfc.py
 nosaveddata/builders/efficientzero.py
+nosaveddata/builders/film.py
 nosaveddata/builders/mcts.py
 nosaveddata/builders/mlp.py
 nosaveddata/builders/moe.py

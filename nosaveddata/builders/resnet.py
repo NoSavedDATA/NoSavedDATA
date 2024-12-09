@@ -4,8 +4,10 @@ import torch.nn.functional as F
 
 from .weight_init import *
 from .transformer import  ConvAttnBlock
+from .film import FiLM_2dBlock
 from ..nsd_utils.networks import params_count
 from ..nsd_utils.save_hypers import nsd_Module
+
 
 import numpy as np
 
@@ -240,6 +242,43 @@ class IMPALA_Resnet(nsd_Module):
         
     def forward(self, X):
         return self.cnn(X)
+
+
+class IMPALA_FiLM(nsd_Module):
+    def __init__(self, first_channels=12, scale_width=1, norm=True, init=init_relu, act=nn.SiLU(), 
+                 condition_dim=256, bias=True):
+        super().__init__()
+
+        
+        self.cnn = [self.get_block(first_channels, 16*scale_width),
+                    self.get_block(16*scale_width, 32*scale_width),
+                    self.get_block(32*scale_width, 32*scale_width, last_relu=True)]
+        params_count(self, 'IMPALA ResNet')
+        
+    def get_block(self, in_hiddens, out_hiddens, last_relu=False):
+        
+        blocks = [nn.ModuleList([DQN_Conv(in_hiddens, out_hiddens, 3, 1, 1, max_pool=True, bias=self.bias, act=self.act, norm=self.norm, init=self.init).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()]),
+                               nn.ModuleList([Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()]),
+                               nn.ModuleList([Residual_Block(out_hiddens, out_hiddens, bias=self.bias, norm=self.norm, act=self.act, init=self.init, out_act=self.act if last_relu else nn.Identity()).cuda(),
+                                             FiLM_2dBlock(self.condition_dim, out_hiddens).cuda()])
+                ]
+        
+        return blocks
+        
+    def forward(self, X):
+        for block in self.cnn:
+            for subblock in block:
+                X = subblock[0](X)
+        return X
+
+    def film(self, X, c):
+        for block in self.cnn:
+            for subblock in block:
+                X = subblock[0](X)
+                X = subblock[1](X, c)
+        return X
 
 
 class IMPALA_Resnet_Whitened(nsd_Module):
