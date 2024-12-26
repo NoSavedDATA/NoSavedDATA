@@ -71,6 +71,192 @@ class Attention(nsd_Module):
         y = self.resid_dropout(self.proj(y))
         return y
 
+    def forward_xl(self, q, k, v, is_causal):
+        B, T, C = q.size()
+
+        q = self.W_k(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
+
+        self.k_pre = k.detach()
+        self.v_pre = v.detach()
+        if self.k_post!=None:
+            k = torch.cat((self.post,k),-2)
+            v = torch.cat((self.post,v),-2)
+        
+        self.k_post = self.k_pre
+        self.v_post = self.v_pre
+
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        
+        # efficient attention using Flash Attention CUDA kernels
+        
+        with torch.backends.cuda.sdp_kernel():
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+        
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.proj(y))
+        return y
+    
+    def forward_xl_windowed(self, q, k, v, is_causal):
+        B, T, C = q.size()
+        
+        q = self.W_k(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
+
+        if self.k_pre == None:
+            self.k_pre = k.detach()
+            self.v_pre = v.detach()
+        elif self.k_pre.shape[-2] < self.seq_len:
+            self.k_pre = k.detach()
+            self.v_pre = v.detach()
+        else:
+            self.k_pre = k[...,1:,:].detach()
+            self.v_pre = v[...,1:,:].detach()
+
+
+        if self.k_post!=None:
+            k = torch.cat((self.post,k),-2)
+            v = torch.cat((self.post,v),-2)
+        
+
+        self.k_post = self.k_pre
+        self.v_post = self.v_pre
+
+
+
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        
+        # efficient attention using Flash Attention CUDA kernels
+        
+        with torch.backends.cuda.sdp_kernel():
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+        
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.proj(y))
+        return y
+
+    
+class Attention_XL(nsd_Module):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
+        super().__init__()
+        # key, query, value projections for all heads, but in a batch
+        self.W_q = nn.Linear(d_model, d_model, bias=bias)
+        self.W_k = nn.Linear(d_model, d_model, bias=bias)
+        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        # output projection
+        self.proj = nn.Linear(d_model, d_model, bias=bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+
+    def forward(self, q, k, v, is_causal):
+        B, T, C = q.size()
+
+        q = self.W_k(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
+
+        self.k_pre = k.detach()
+        self.v_pre = v.detach()
+        if self.k_post!=None:
+            k = torch.cat((self.post,k),-2)
+            v = torch.cat((self.post,v),-2)
+        
+        self.k_post = self.k_pre
+        self.v_post = self.v_pre
+
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        
+        # efficient attention using Flash Attention CUDA kernels
+        
+        with torch.backends.cuda.sdp_kernel():
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+        
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.proj(y))
+        return y
+
+    
+class Attention_XL_window(nsd_Module):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8):
+        super().__init__()
+        # key, query, value projections for all heads, but in a batch
+        self.W_q = nn.Linear(d_model, d_model, bias=bias)
+        self.W_k = nn.Linear(d_model, d_model, bias=bias)
+        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        # output projection
+        self.proj = nn.Linear(d_model, d_model, bias=bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+        self.seq_len = seq_len
+
+    def forward(self, q, k, v, is_causal):
+        B, T, C = q.size()
+        
+        q = self.W_k(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
+
+        if self.k_pre == None:
+            self.k_pre = k.detach()
+            self.v_pre = v.detach()
+        elif self.k_pre.shape[-2] < self.seq_len:
+            self.k_pre = k.detach()
+            self.v_pre = v.detach()
+        else:
+            self.k_pre = k[...,1:,:].detach()
+            self.v_pre = v[...,1:,:].detach()
+
+
+        if self.k_post!=None:
+            k = torch.cat((self.post,k),-2)
+            v = torch.cat((self.post,v),-2)
+        
+
+        self.k_post = self.k_pre
+        self.v_post = self.v_pre
+
+
+
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        
+        # efficient attention using Flash Attention CUDA kernels
+        
+        with torch.backends.cuda.sdp_kernel():
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+        
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.proj(y))
+        return y
+
+
 
 class MemoryAttention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
@@ -333,6 +519,106 @@ class GPT_NLP(nsd_Module):
         X = self.gpt(X, is_causal=is_causal)
 
         return self.cls(X)
+
+
+
+
+
+
+
+
+
+
+class GPT_Block_XL(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4, seq_len=8, windowed=False):
+        super().__init__()
+        self.ln_1 = LayerNormNoBias(d_model, bias=bias)
+        if windowed:
+            self.attn = Attention_XL_window(d_model, nhead, bias, dropout, seq_len=seq_len)
+        else:
+            self.attn = Attention_XL(d_model, nhead, bias, dropout)
+        self.ln_2 = LayerNormNoBias(d_model, bias=bias)
+        self.mlp = FFN(d_model, dropout, bias, ffn_mult)
+
+    def forward(self, x, is_causal=True):
+        x_ln = self.ln_1(x)
+        x = x + self.attn(x_ln, x_ln, x_ln, is_causal=is_causal)
+        
+        x = x + self.mlp(self.ln_2(x))
+        
+        return x
+    
+
+
+class GPT_Transformer_XL(nsd_Module):
+    def __init__(self, d_model, num_blks, nhead, seq_len,
+                 dropout = 0.1, bias=False, report_params_count=True,
+                 ffn_mult=4, windowed=False):
+        super().__init__()
+
+        #self.pos_encoding = nn.Sequential(nn.Linear(seq_len, d_model, bias=False),
+        #                                  LayerNormNoBias(d_model)) #Stable Embedding Layer # Requires One Hot
+        self.pos_encoding = nn.Embedding(seq_len, d_model)
+        
+        self.final_ln = LayerNormNoBias(d_model)
+        self.start_dropout = nn.Dropout(dropout)
+
+        self.blks = nn.Sequential()
+        for i in range(num_blks):
+            self.blks.add_module("block"+str(i), GPT_Block_XL(
+                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult, seq_len=seq_len, windowed=windowed))
+            
+        
+        #nn.init.xavier_uniform_(self.pos_encoding[0].weight)
+        
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        
+        if report_params_count:
+            params_to_count = [p for p in self.parameters() if p.requires_grad]
+            print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+                
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.bias, 0)
+            nn.init.constant_(module.weight, 1.0)
+
+        
+    def forward(self, X, is_causal=True):
+
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        X = self.start_dropout(X+pos_emb)
+
+        for i, blk in enumerate(self.blks):
+            X = blk(X, is_causal)
+            
+        return self.final_ln(X)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
