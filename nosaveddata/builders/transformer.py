@@ -127,8 +127,8 @@ class Attention(nsd_Module):
 
 
         if self.k_post!=None:
-            k = torch.cat((self.post,k),-2)
-            v = torch.cat((self.post,v),-2)
+            k = torch.cat((self.k_post,k),-2)
+            v = torch.cat((self.v_post,v),-2)
         
 
         self.k_post = self.k_pre
