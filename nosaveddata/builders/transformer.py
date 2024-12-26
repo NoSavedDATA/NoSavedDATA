@@ -425,7 +425,14 @@ class GPT_Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         
         return x
-    
+
+    def forward_xl_windowed(self, x, is_causal=True):
+        x_ln = self.ln_1(x)
+        x = x + self.attn.forward_xl_windowed(x_ln, x_ln, x_ln, is_causal=is_causal)
+        
+        x = x + self.mlp(self.ln_2(x))
+        
+        return x    
     
 
 
@@ -484,7 +491,17 @@ class GPT_Transformer(nsd_Module):
             X = blk(X, is_causal)
             
         return self.final_ln(X)
-    
+
+    def forward_xl_windowed(self, X, is_causal=True):
+
+        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        X = self.start_dropout(X+pos_emb)
+
+        for i, blk in enumerate(self.blks):
+            X = blk.forward_xl_windowed(X, is_causal)
+            
+        return self.final_ln(X)    
 
 
 class GPT_NLP(nsd_Module):
