@@ -35,7 +35,7 @@ class LayerNormNoBias(nn.Module):
 
     
 class Attention(nsd_Module):
-    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
         self.W_q = nn.Linear(d_model, d_model, bias=bias)
@@ -46,6 +46,10 @@ class Attention(nsd_Module):
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
+
+        self.seq_len = seq_len
+        self.k_pre = None
+        self.k_post = None
 
     def forward(self, q, k, v, is_causal):
         B, T, C = q.size()
@@ -411,10 +415,10 @@ class FFN(nn.Module):
     
 
 class GPT_Block(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4):
+    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4, seq_len=8):
         super().__init__()
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, nhead, bias, dropout)
+        self.attn = Attention(d_model, nhead, bias, dropout, seq_len)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
@@ -452,7 +456,7 @@ class GPT_Transformer(nsd_Module):
         self.blks = nn.Sequential()
         for i in range(num_blks):
             self.blks.add_module("block"+str(i), GPT_Block(
-                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult))
+                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult, seq_len=seq_len))
             
         
         #nn.init.xavier_uniform_(self.pos_encoding[0].weight)

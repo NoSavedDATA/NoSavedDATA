@@ -32,3 +32,16 @@ def seed_np_torch(seed=20001118):
     # some cudnn methods can be random even after fixing the seed unless you tell it to be deterministic
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    
+    
+
+def statistical_difference(p1, p2, n):
+    # order invariant
+    
+    d=torch.tensor(p1-p2).abs()
+    std = 1.65 * math.sqrt((p1*(1-p1) + p2*(1-p2))/n)
+    difference = torch.tensor([d-std, d+std])
+        
+    difference = difference.sort()[0]
+    
+    return difference
