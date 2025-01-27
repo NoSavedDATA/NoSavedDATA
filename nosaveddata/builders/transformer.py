@@ -690,12 +690,12 @@ class Transformer_NoDATA(nn.Module):
 
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
 
-        #self.apply(init_gpt)
-        #for pn, p in self.named_parameters():
-        #    if pn.endswith('proj.weight'):
-        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        self.apply(init_gpt)
+        for pn, p in self.named_parameters():
+           if pn.endswith('proj.weight'):
+               torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
 
-        self.apply(init_xavier)
+        # self.apply(init_xavier)
         
         #for pn, p in self.named_parameters():
         #    if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
@@ -932,9 +932,9 @@ class CrossAttention_Transformer(nn.Module):
 
         pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
-        q = self.start_dropout(q+pos_emb)
-        k = self.start_dropout(k+pos_emb)
-        v = self.start_dropout(v+pos_emb)
+        q = self.start_dropout(q+pos_emb[:q.shape[-2]])
+        k = self.start_dropout(k+pos_emb[:v.shape[-2]])
+        v = self.start_dropout(v+pos_emb[:v.shape[-2]])
 
         for i, blk in enumerate(self.blks):
             q = blk.forward(q,k,v, is_causal)

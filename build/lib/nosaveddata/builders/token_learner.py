@@ -30,7 +30,7 @@ class TokenLearner(nn.Module):
         attn_w = self.attention(X).flatten(-2,-1)[...,None]
         
         X = X.view(B, C, -1).transpose(-2,-1)[:,None]
-        print(f"attn out: {attn_w.shape}, X {X.shape}")
+        # print(f"attn out: {attn_w.shape}, X {X.shape}")
         X = (X*attn_w).mean(2)
         
         return X

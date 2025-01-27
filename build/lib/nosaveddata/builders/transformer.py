@@ -690,12 +690,12 @@ class Transformer_NoDATA(nn.Module):
 
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
 
-        #self.apply(init_gpt)
-        #for pn, p in self.named_parameters():
-        #    if pn.endswith('proj.weight'):
-        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        self.apply(init_gpt)
+        for pn, p in self.named_parameters():
+           if pn.endswith('proj.weight'):
+               torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
 
-        self.apply(init_xavier)
+        # self.apply(init_xavier)
         
         #for pn, p in self.named_parameters():
         #    if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
