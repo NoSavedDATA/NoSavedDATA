@@ -487,8 +487,8 @@ class GPT_Transformer(nsd_Module):
         
     def forward(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
-        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        pos = torch.arange(0, X.shape[1], dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
 
         for i, blk in enumerate(self.blks):
@@ -498,14 +498,14 @@ class GPT_Transformer(nsd_Module):
 
     def forward_xl_windowed(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
-        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        pos = torch.arange(0, X.shape[1], dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
 
         for i, blk in enumerate(self.blks):
             X = blk.forward_xl_windowed(X, is_causal)
             
-        return self.final_ln(X)    
+        return self.final_ln(X)
 
 
 class GPT_NLP(nsd_Module):
@@ -618,8 +618,8 @@ class GPT_Transformer_XL(nsd_Module):
         
     def forward(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
-        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        pos = torch.arange(0, X.shape[1], dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
 
         for i, blk in enumerate(self.blks):
@@ -716,8 +716,8 @@ class Transformer_NoDATA(nn.Module):
 
     def forward(self, X, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
-        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        pos = torch.arange(0, X.shape[1], dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
         
 
@@ -741,8 +741,8 @@ class Transformer_NoDATA(nn.Module):
     
     def masked(self, X, mask, is_causal=True):
 
-        pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
-        pos_emb = self.pos_encoding(pos)[:X.shape[1]]
+        pos = torch.arange(0, self.X.shape[1], dtype=torch.long, device='cuda')
+        pos_emb = self.pos_encoding(pos)
         X = self.start_dropout(X+pos_emb)
         X = X.gather(1, mask)
         
@@ -907,7 +907,7 @@ class CrossAttention_Transformer(nn.Module):
                                 d_model, nhead, dropout, bias=False))
             
         
-        nn.init.xavier_uniform_(self.pos_encoding[0].weight)
+        nn.init.xavier_uniform_(self.pos_encoding.weight)
 
 
         
