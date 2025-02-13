@@ -111,7 +111,7 @@ class Residual_Block(nn.Module):
     
 
 class ConvNeXt_Block(nn.Module):
-    def __init__(self, in_channels, channels, scale=4, stride=1, act=nn.GELU(), norm=True, init=init_relu):
+    def __init__(self, in_channels, channels, scale=4, stride=1, act=nn.GELU(), norm=True, init=init_gpt):
         super().__init__()
         
         
@@ -123,9 +123,9 @@ class ConvNeXt_Block(nn.Module):
                               act)
         conv3 = nn.Conv2d(channels*scale, channels, kernel_size=1, padding=0)
 
-        conv1.apply(init_orth)
+        conv1.apply(init_gpt)
         conv2.apply(init)
-        conv1.apply(init_orth)
+        conv1.apply(init_gpt)
         
         self.conv = nn.Sequential(conv1, conv2, conv3)
         

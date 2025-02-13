@@ -2,11 +2,11 @@ Metadata-Version: 2.1
 Name: nosaveddata
 Version: 0.12
 Summary: High level tools from my neural network projects
-Home-page: UNKNOWN
 Author: Augusto Seben da Rosa
 Author-email: snykralafk@gmail.com
-License: UNKNOWN
-Platform: UNKNOWN
-
-UNKNOWN
-
+Requires-Dist: diffusers
+Requires-Dist: wandb
+Requires-Dist: einops
+Requires-Dist: opencv-python==4.8.0.74
+Requires-Dist: matplotlib
+Requires-Dist: pandas

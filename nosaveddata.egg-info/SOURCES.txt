@@ -9,6 +9,7 @@ nosaveddata.egg-info/requires.txt
 nosaveddata.egg-info/top_level.txt
 nosaveddata/builders/__init__.py
 nosaveddata/builders/cfc.py
+nosaveddata/builders/cnn_modules.py
 nosaveddata/builders/efficientzero.py
 nosaveddata/builders/film.py
 nosaveddata/builders/mcts.py
@@ -30,6 +31,7 @@ nosaveddata/builders/dnc/__init__.py
 nosaveddata/builders/dnc/dnc.py
 nosaveddata/builders/dnc/memory.py
 nosaveddata/nsd_preprocessing/__init__.py
+nosaveddata/nsd_preprocessing/paths.py
 nosaveddata/nsd_preprocessing/vision.py
 nosaveddata/nsd_utils/__init__.py
 nosaveddata/nsd_utils/bbf.py

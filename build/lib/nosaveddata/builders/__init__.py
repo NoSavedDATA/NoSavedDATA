@@ -12,6 +12,8 @@ from .vit import *
 from .token_learner import *
 from .vq_vae import *
 
+from .cnn_modules import *
+
 from .moe import *
 from .transformer import *
 from .transformer_llama import *

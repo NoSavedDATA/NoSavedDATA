@@ -95,13 +95,13 @@ def init_saving_variance(module, num_blks):
 
 def init_gpt(module):
     #print(f"From init_gpt.\nGpt proj linears should have a special weight initialization not implemented here.")
-    if isinstance(module, nn.Linear):
-        torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    if type(module) in (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d):
+        torch.nn.init.trunc_normal_(module.weight, mean=0.0, std=0.02)
         #torch.nn.init.xavier_normal_(module.weight)
         if module.bias is not None:
             torch.nn.init.zeros_(module.bias)
     elif isinstance(module, nn.Embedding):
-        torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        torch.nn.init.trunc_normal_(module.weight, mean=0.0, std=0.02)
         #torch.nn.init.xavier_normal_(module.weight)
     elif isinstance(module, nn.LayerNorm):
         nn.init.constant_(module.bias, 0)

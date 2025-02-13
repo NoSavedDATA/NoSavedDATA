@@ -19,9 +19,10 @@ class SoftMoE(nsd_Module):
     def __init__(self, hiddens, num_experts=8, num_slots=1, act=nn.SiLU()):
         super().__init__()
 
-        self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_lecun)
+        self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots)
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_relu)]*num_experts)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act) for _ in range(num_experts)])
+        self.apply(init_gpt)
 
         params_count(self, 'Soft MoE')
     
@@ -56,8 +57,9 @@ class SoftMoE_Projection(nsd_Module):
         
         self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_lecun)
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_relu)]*num_experts)
-        self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_xavier)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_relu) for _ in range(num_experts)])
+        self.expert_projection = MLP(hiddens, out_hiddens=projected_dim)
+        self.apply(init_gpt)
 
     
         params_count(self, 'Soft MoE+Projection')
@@ -132,7 +134,7 @@ class SoftMoE_Combine_Output(nsd_Module):
         #self.dispatch_w_remove_grads.turn_off_grads()
         
 
-        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_gpt)]*num_experts)
+        self.experts = nn.ModuleList([MLP(num_slots*hiddens, out_hiddens=num_slots*hiddens, out_act=act, last_init=init_gpt) for _ in range(num_experts)])
         self.expert_projection = MLP(hiddens, out_hiddens=projected_dim, last_init=init_gpt)
 
         params_count(self, 'Soft MoE')
@@ -196,7 +198,7 @@ class SoftMoE_FFN(nn.Module):
 
         self.slots = MLP(hiddens, out_hiddens=num_experts*num_slots, last_init=init_lecun)
 
-        self.experts = nn.ModuleList([FFN(num_slots*hiddens, dropout, bias, ffn_mult)]*num_experts)
+        self.experts = nn.ModuleList([FFN(num_slots*hiddens, dropout, bias, ffn_mult) for _ in range(num_experts)])
 
         params_count(self, 'Soft MoE')
     
