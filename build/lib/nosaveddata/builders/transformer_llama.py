@@ -177,7 +177,9 @@ class Attention_Rotary_Embedding(nn.Module):
     def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
-        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+        self.W_q = nn.Linear(d_model, d_model, bias=bias)
+        self.W_k = nn.Linear(d_model, d_model, bias=bias)
+        self.W_v = nn.Linear(d_model, d_model, bias=bias)
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -190,7 +192,9 @@ class Attention_Rotary_Embedding(nn.Module):
     def forward(self, q, k, v, freqs_cis, is_causal, mask=None):
         B, T, C = q.size()
         
-        q, k, v  = self.W_qkv(x).split(self.n_embd, dim=-1)
+        q = self.W_q(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
 
         
         

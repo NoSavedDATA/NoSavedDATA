@@ -46,7 +46,9 @@ class Attention_Rotary_Embedding_XL(nn.Module):
         self.seq_len = seq_len
 
         self.k_xl_positinal_emb = nn.Embedding(self.seq_len, d_model)
-        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+        self.W_q = nn.Linear(d_model, d_model, bias=bias)
+        self.W_k = nn.Linear(d_model, d_model, bias=bias)
+        self.W_v = nn.Linear(d_model, d_model, bias=bias)
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -76,7 +78,9 @@ class Attention_Rotary_Embedding_XL(nn.Module):
     def forward(self, q, k, v, freqs_cis, is_causal, mask=None):
         B, T, C = q.size()
         
-        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
+        q = self.W_q(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
 
 
         
@@ -144,7 +148,9 @@ class Attention_Rotary_Embedding_XL(nn.Module):
     def no_xl(self, q, k, v, freqs_cis, is_causal, mask=None):
         B, T, C = q.size()
         
-        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
+        q = self.W_q(q)
+        k = self.W_k(k)
+        v = self.W_v(v)
 
 
         # print(f"k {k.shape}, k xl: {self.k_xl.shape}")
