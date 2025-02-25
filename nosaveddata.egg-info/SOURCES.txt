@@ -19,6 +19,7 @@ nosaveddata/builders/resnet.py
 nosaveddata/builders/token_learner.py
 nosaveddata/builders/transformer.py
 nosaveddata/builders/transformer_llama.py
+nosaveddata/builders/transformer_llama_extensions.py
 nosaveddata/builders/unet.py
 nosaveddata/builders/unet_conditional.py
 nosaveddata/builders/unet_dit.py

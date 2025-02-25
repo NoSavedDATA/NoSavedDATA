@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .transformer import Attention
+# from torch.nn.attention import SDPBackend, sdpa_kernel
 
 '''
 REFERENCES:
@@ -176,9 +177,7 @@ class Attention_Rotary_Embedding(nn.Module):
     def __init__(self, d_model=512, num_heads=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
-        self.W_q = nn.Linear(d_model, d_model, bias=bias)
-        self.W_k = nn.Linear(d_model, d_model, bias=bias)
-        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -191,9 +190,7 @@ class Attention_Rotary_Embedding(nn.Module):
     def forward(self, q, k, v, freqs_cis, is_causal, mask=None):
         B, T, C = q.size()
         
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.n_embd, dim=-1)
 
         
         
@@ -243,7 +240,7 @@ class FFN_LLaMa(nn.Module):
         self.w1 = nn.Linear(
             dim, hidden_dim, bias=False,
         )
-        self.w2 = nn.Linear(
+        self.w2_proj = nn.Linear(
             hidden_dim, dim, bias=False,
         )
         self.w3 = nn.Linear(
@@ -251,11 +248,11 @@ class FFN_LLaMa(nn.Module):
         )
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2_proj(F.silu(self.w1(x)) * self.w3(x))
 
 
 class LLaMa_Block(nn.Module):
-    def __init__(self, layer_id, d_model, nhead, bias=False, dropout=0.1, eps=1e-6, cross_attention=False):
+    def __init__(self, layer_id, d_model, ffn, nhead, bias=False, dropout=0.1, eps=1e-6, cross_attention=False):
         """
         Initialize a TransformerBlock.
 
@@ -279,7 +276,7 @@ class LLaMa_Block(nn.Module):
         self.attention = Attention_Rotary_Embedding(d_model, nhead, bias=bias, dropout=dropout)
         self.feed_forward = FFN_LLaMa(
             dim=d_model,
-            hidden_dim=4 * d_model
+            hidden_dim=ffn
         )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(d_model, eps=eps)
@@ -331,7 +328,7 @@ class LLaMa_Block(nn.Module):
 
 
 class LLaMa_Transformer(nn.Module):
-    def __init__(self, d_model, nhead, num_blks, seq_len, 
+    def __init__(self, d_model, ffn_dim, nhead, num_blks, seq_len, 
                   dropout = 0.1, bias=False, eps=1e-6, report_params_count=True, cross_attention=False):
         """
         Initialize a Transformer model.
@@ -356,7 +353,7 @@ class LLaMa_Transformer(nn.Module):
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(num_blks):
-            self.layers.append(LLaMa_Block(layer_id, d_model, nhead, bias, dropout, eps, cross_attention))
+            self.layers.append(LLaMa_Block(layer_id, d_model, ffn_dim, nhead, bias, dropout, eps, cross_attention))
 
         self.norm = RMSNorm(d_model, eps=eps)
 
@@ -483,260 +480,4 @@ class LLaMa_NLP(nn.Module):
         output = self.output(h).float()
 
         return output
-
-'''XL'''
-
-
-class Attention_Rotary_Embedding_XL(nn.Module):
-    def __init__(self, d_model, num_heads, seq_len, bias=False, dropout=0.1):
-        super().__init__()
-        # key, query, value projections for all heads, but in a batch
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.seq_len = seq_len
-
-        self.k_xl_positinal_emb = nn.Embedding(self.seq_len, d_model)
-        self.W_q = nn.Linear(d_model, d_model, bias=bias)
-        self.W_k = nn.Linear(d_model, d_model, bias=bias)
-        self.W_v = nn.Linear(d_model, d_model, bias=bias)
-        # output projection
-        self.proj = nn.Linear(d_model, d_model, bias=bias)
-        # regularization
-        self.attn_dropout = nn.Dropout(dropout)
-        self.resid_dropout = nn.Dropout(dropout)
-        self.n_head = num_heads
-        self.n_embd = d_model
-        self.dropout = dropout
-
-        print(f"seq len: {self.seq_len}")
-        self.k_xl = None
-        self.v_xl = None
-
-    @torch.no_grad()
-    def reset_indices(self, reset_indices, bs):
-
-        if self.k_xl==None:
-            self.k_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda')
-            self.v_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda')
-        else:
-            # print(f"RESET: {self.k_xl.shape, reset_indices.shape}")
-            # print(f"{reset_indices}")
-            reset_indices = reset_indices[:,None,None].cuda()
-            self.k_xl = self.k_xl * reset_indices
-            self.v_xl = self.v_xl * reset_indices
-
-
-    def forward(self, q, k, v, freqs_cis, is_causal, mask=None):
-        B, T, C = q.size()
-        
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
-
-
-        # print(f"k {k.shape}, k xl: {self.k_xl.shape}")
-        k_pre = k.detach()
-        v_pre = v.detach()
-
-        self.k_xl = self.k_xl + self.k_xl_positinal_emb(torch.arange(0,self.k_xl.shape[-2],device='cuda'))[None,:]
-
-
-        
-        
-        q = q.view(B,  T, self.n_head, C // self.n_head) # (B, T, nh, hs)
-        k = k.view(B, -1, self.n_head, C // self.n_head) # (B, T, nh, hs)
-        v = v.view(B, -1, self.n_head, C // self.n_head) # (B, T, nh, hs)
-        
-        
-        q, k = apply_rotary_emb(q, k, *freqs_cis)
-        q = q.transpose(1, 2) # (B, nh, T, hs)
-        k = k.transpose(1, 2) # (B, nh, T, hs)
-        v = v.transpose(1, 2) # (B, nh, T, hs)
-        k_xl = self.k_xl.view(B, -1, self.n_head, C // self.n_head).transpose(1,2)
-        v_xl = self.v_xl.view(B, -1, self.n_head, C // self.n_head).transpose(1,2)
-
-        k = torch.cat((k_xl, k),-2)
-        v = torch.cat((v_xl, v),-2)
-
-        # print(f"q {q.shape} k {k.shape}")
-        
-        self.k_xl = k_pre
-        self.v_xl = v_pre
-
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        # efficient attention using Flash Attention CUDA kernels
-        
-        with torch.backends.cuda.sdp_kernel():
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
-        
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-
-        # output projection
-        y = self.resid_dropout(self.proj(y))
-        return y
-
-
-
-
-class LLaMa_Block_XL(nn.Module):
-    def __init__(self, layer_id, d_model, nhead, seq_len, bias=False, dropout=0.1, eps=1e-6, cross_attention=False):
-        """
-        Initialize a TransformerBlock.
-
-        Args:
-            layer_id (int): Identifier for the layer.
-            args (ModelArgs): Model configuration parameters.
-
-        Attributes:
-            n_heads (int): Number of attention heads.
-            dim (int): Dimension size of the model.
-            head_dim (int): Dimension size of each attention head.
-            attention (Attention): Attention module.
-            feed_forward (FeedForward): FeedForward module.
-            layer_id (int): Identifier for the layer.
-            attention_norm (RMSNorm): Layer normalization for attention output.
-            ffn_norm (RMSNorm): Layer normalization for feedforward output.
-
-        """
-        super().__init__()
-        head_dim = d_model // nhead
-        self.attention = Attention_Rotary_Embedding_XL(d_model, nhead, seq_len, bias=bias, dropout=dropout)
-        self.feed_forward = FFN_LLaMa(
-            dim=d_model,
-            hidden_dim=4 * d_model
-        )
-        self.layer_id = layer_id
-        self.attention_norm = RMSNorm(d_model, eps=eps)
-        self.ffn_norm = RMSNorm(d_model, eps=eps)
-
-        if cross_attention:
-            self.forward = self.forward_cross_attention
-        else:
-            self.forward = self.forward_self_attention
-    
-    def forward_self_attention(
-        self,
-        q, k, v,
-        freqs_cis,
-        is_causal,
-        mask=None
-    ):
-        q=self.attention_norm(q)
-        k=q.clone()
-        v=q.clone()
-
-        h = q + self.attention.forward(
-            q, k, v, freqs_cis, is_causal
-        )
-        out = h + self.feed_forward.forward(self.ffn_norm(h))
-        return out
-
-    def forward_cross_attention(
-        self,
-        q, k, v,
-        freqs_cis,
-        is_causal,
-        mask=None
-    ):
-
-        q=self.attention_norm(q)
-        k=self.attention_norm(k)
-        v=self.attention_norm(v)
-
-        h = q + self.attention.forward(
-            q, k, v, freqs_cis, is_causal, mask
-        )
-        out = h + self.feed_forward.forward(self.ffn_norm(h))
-        return out
-
-
-
-
-
-
-class LLaMa_Transformer_XL(nn.Module):
-    def __init__(self, d_model, nhead, num_blks, seq_len, 
-                  dropout = 0.1, bias=False, eps=1e-6, report_params_count=True, cross_attention=False):
-        """
-        Initialize a Transformer model.
-
-        Args:
-            params (ModelArgs): Model configuration parameters.
-
-        Attributes:
-            params (ModelArgs): Model configuration parameters.
-            vocab_size (int): Vocabulary size.
-            n_layers (int): Number of layers in the model.
-            tok_embeddings (ParallelEmbedding): Token embeddings.
-            layers (torch.nn.ModuleList): List of Transformer blocks.
-            norm (RMSNorm): Layer normalization for the model output.
-            output (ColumnParallelLinear): Linear layer for final output.
-            freqs_cis (torch.Tensor): Precomputed cosine and sine frequencies.
-        """
-
-        super().__init__()
-        self.num_blks = num_blks
-
-
-        self.layers = torch.nn.ModuleList()
-        for layer_id in range(num_blks):
-            self.layers.append(LLaMa_Block_XL(layer_id, d_model, nhead, seq_len, bias, dropout, eps, cross_attention))
-
-        self.norm = RMSNorm(d_model, eps=eps)
-
-        freqs_cis_q = precompute_freqs_cis(
-            d_model // nhead, seq_len
-        )
-
-        freqs_cis_k = precompute_freqs_cis(
-            d_model // nhead, seq_len
-        )
-
-        self.freqs_cis = (freqs_cis_q, freqs_cis_k)
-
-        if report_params_count:
-            params_to_count = [p for p in self.parameters() if p.requires_grad]
-            print(f'LLaMa Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
-
-        self.apply(self._init_weights)
-        # apply special scaled init to the residual projections, per GPT-2 paper
-        for pn, p in self.named_parameters():
-            if pn.endswith('proj.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
-    
-
-    def reset_indices(self, reset_indices, bs):
-
-        for layer in self.layers:
-            layer.attention.reset_indices(reset_indices, bs)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            #torch.nn.init.xavier_normal_(module.weight)
-    
-    def forward(self, q, k, v, causal, mask=None):
-
-
-        _, seqlen, _ = q.shape
-        
-        self.freqs_cis = (self.freqs_cis[0].to(q.device),self.freqs_cis[1].to(q.device))
-        freqs_cis = self.freqs_cis
-        #freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-
-
-        for layer in self.layers:
-            q = layer(q, k, v, freqs_cis, causal, mask)
-            # k=q and v=q if self attention, which is the default option.
-
-        h = self.norm(q)
-        
-        
-
-        return h
 

@@ -106,7 +106,27 @@ def init_gpt(module):
     elif isinstance(module, nn.LayerNorm):
         nn.init.constant_(module.bias, 0)
         nn.init.constant_(module.weight, 1.0)
-        
+
+
+
+def init_switch_t(module):
+    #print(f"From init_gpt.\nGpt proj linears should have a special weight initialization not implemented here.")
+    
+
+    if type(module) in (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d):
+        fan_in = module.weight.shape[-1]
+        std = math.sqrt(0.1/fan_in)
+        torch.nn.init.trunc_normal_(module.weight, mean=0.0, std=std)
+        if module.bias is not None:
+            torch.nn.init.zeros_(module.bias)
+    elif isinstance(module, nn.Embedding):
+        fan_in = module.weight.shape[-1]
+        std = math.sqrt(0.1/fan_in)
+        torch.nn.init.trunc_normal_(module.weight, mean=0.0, std=std)
+    elif isinstance(module, nn.LayerNorm):
+        nn.init.constant_(module.bias, 0)
+        nn.init.constant_(module.weight, 1.0)
+
 
 def init_proj(module):
     assert not isinstance(module, nn.Conv1d) and not isinstance(module, nn.Conv2d) and not isinstance(module, nn.Conv3d)

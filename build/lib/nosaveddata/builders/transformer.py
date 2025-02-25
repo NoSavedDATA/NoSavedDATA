@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import math
 
 from .weight_init import *
+# from torch.nn.attention import SDPBackend, sdpa_kernel
 from ..nsd_utils.save_hypers import nsd_Module
 
 
@@ -38,9 +39,7 @@ class Attention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
-        self.W_q = nn.Linear(d_model, d_model, bias=bias)
-        self.W_k = nn.Linear(d_model, d_model, bias=bias)
-        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -54,9 +53,7 @@ class Attention(nsd_Module):
     def forward(self, q, k, v, is_causal):
         B, T, C = q.size()
         
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
         
         q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
         k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
@@ -78,9 +75,7 @@ class Attention(nsd_Module):
     def forward_xl(self, q, k, v, is_causal):
         B, T, C = q.size()
 
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
 
         self.k_pre = k.detach()
         self.v_pre = v.detach()
@@ -111,9 +106,7 @@ class Attention(nsd_Module):
     def forward_xl_windowed(self, q, k, v, is_causal):
         B, T, C = q.size()
         
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
 
         if self.k_pre == None:
             self.k_pre = k.detach()
@@ -158,9 +151,9 @@ class Attention_XL(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
-        self.W_q = nn.Linear(d_model, d_model, bias=bias)
-        self.W_k = nn.Linear(d_model, d_model, bias=bias)
-        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+
+        
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -170,9 +163,8 @@ class Attention_XL(nsd_Module):
     def forward(self, q, k, v, is_causal):
         B, T, C = q.size()
 
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
+        
 
         self.k_pre = k.detach()
         self.v_pre = v.detach()
@@ -205,9 +197,7 @@ class Attention_XL_window(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
-        self.W_q = nn.Linear(d_model, d_model, bias=bias)
-        self.W_k = nn.Linear(d_model, d_model, bias=bias)
-        self.W_v = nn.Linear(d_model, d_model, bias=bias)
+        self.W_qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -218,9 +208,7 @@ class Attention_XL_window(nsd_Module):
     def forward(self, q, k, v, is_causal):
         B, T, C = q.size()
         
-        q = self.W_k(q)
-        k = self.W_k(k)
-        v = self.W_v(v)
+        q, k, v  = self.W_qkv(x).split(self.d_model, dim=-1)
 
         if self.k_pre == None:
             self.k_pre = k.detach()
@@ -441,7 +429,7 @@ class GPT_Block(nn.Module):
 
 
 class GPT_Transformer(nsd_Module):
-    def __init__(self, d_model, num_blks, nhead, seq_len,
+    def __init__(self, d_model, nhead, num_blks, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4):
         super().__init__()
@@ -572,7 +560,7 @@ class GPT_Block_XL(nn.Module):
 
 
 class GPT_Transformer_XL(nsd_Module):
-    def __init__(self, d_model, num_blks, nhead, seq_len,
+    def __init__(self, d_model, nhead, num_blks, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  ffn_mult=4, windowed=False):
         super().__init__()

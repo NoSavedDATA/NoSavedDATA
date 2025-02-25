@@ -17,6 +17,7 @@ from .cnn_modules import *
 from .moe import *
 from .transformer import *
 from .transformer_llama import *
+from .transformer_llama_extensions import *
 
 from .unet import *
 from .unet_dit import *

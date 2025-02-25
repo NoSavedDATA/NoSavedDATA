@@ -61,6 +61,54 @@ class MLP(nn.Module):
         return self.mlp(X)
 
 
+
+class MLPgpt(nn.Module):
+    def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
+                 in_act=nn.SiLU(), out_act=nn.Identity(), num_blks=1,
+                 ln_eps=1e-3, bias=True):
+        super().__init__()
+        # Special MLP with custom options for non last layer and last layer Linears.
+
+        modules=[]
+        self.num_blks = num_blks
+        
+        hiddens=in_hiddens
+        _out_hiddens = med_hiddens
+        act = in_act
+        for l in range(layers):
+            last_layer = l==(layers-1)
+            if last_layer:
+                _out_hiddens = out_hiddens
+                act = out_act
+            modules.append(nn.Linear(hiddens, _out_hiddens, bias=bias))
+            
+            modules.append(act)
+            hiddens=med_hiddens
+        self.mlp=nn.Sequential(*modules)
+        #print(self.mlp)
+
+        
+        self.init_weights()
+
+    def turn_off_grads(self):
+        for layer in self.mlp:
+            if hasattr(layer, 'weight'):
+                layer.weight.requires_grad=False
+            if hasattr(layer, 'bias'):
+                layer.bias.requires_grad=False
+
+    def init_weights(self):
+        for p in self.mlp[-2].parameters():
+            torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * self.num_blks))
+        
+        for p in self.mlp[:-2].parameters():
+            torch.nn.init.normal_(p, mean=0.0, std=0.02)
+
+        
+        
+    def forward(self,X):
+        return self.mlp(X)
+
 class MLP_NoDATA(nsd_Module):
     def __init__(self, in_hiddens=512, med_hiddens=512, out_hiddens=512, layers=1,
                  init=init_relu, in_act=nn.SiLU(), out_act=nn.Identity(),
