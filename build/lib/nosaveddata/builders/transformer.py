@@ -647,9 +647,8 @@ class GPT_Transformer_XL(nsd_Module):
 class Transformer_Block_NoLN(nsd_Module):
     def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4, stochastic_depth=1):
         super().__init__()
-        self.ln_1 = LayerNormNoBias(d_model, bias=bias)
+
         self.attn = Attention(d_model, nhead, bias, dropout)
-        self.ln_2 = LayerNormNoBias(d_model, bias=bias)
         self.mlp = FFN(d_model, dropout, bias, ffn_mult)
 
     def forward(self, x, is_causal=True):
@@ -657,10 +656,10 @@ class Transformer_Block_NoLN(nsd_Module):
         keep_path = torch.ones(x.shape[0],device='cuda')*(self.stochastic_depth if self.training else 1)
         keep_path = torch.bernoulli(keep_path)[:,None,None]
 
-        x_ln = self.ln_1(x)
+        x_ln = x
         x = x + self.attn(x_ln, x_ln, x_ln, is_causal=is_causal)*keep_path
         
-        x = x + self.mlp(self.ln_2(x))*keep_path
+        x = x + self.mlp(x)*keep_path
         
         return x
 
@@ -691,17 +690,17 @@ class Transformer_NoDATA(nn.Module):
 
         # https://proceedings.mlr.press/v119/huang20f/huang20f.pdf
 
-        self.apply(init_gpt)
-        for pn, p in self.named_parameters():
-           if pn.endswith('proj.weight'):
-               torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+        # self.apply(init_gpt)
+        # for pn, p in self.named_parameters():
+        #    if pn.endswith('proj.weight'):
+        #        torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
 
-        # self.apply(init_xavier)
         
-        #for pn, p in self.named_parameters():
-        #    if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
-        #        torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
-        #self.apply(self._init_weights)
+        self.apply(init_xavier)
+        for pn, p in self.named_parameters():
+           if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
+               torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
+        self.apply(self._init_weights)
         
 
         if report_params_count:

@@ -35,6 +35,7 @@ nosaveddata/nsd_preprocessing/__init__.py
 nosaveddata/nsd_preprocessing/paths.py
 nosaveddata/nsd_preprocessing/vision.py
 nosaveddata/nsd_utils/__init__.py
+nosaveddata/nsd_utils/adaptive_batch.py
 nosaveddata/nsd_utils/bbf.py
 nosaveddata/nsd_utils/cv.py
 nosaveddata/nsd_utils/dreamer.py
