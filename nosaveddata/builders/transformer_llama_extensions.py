@@ -342,10 +342,6 @@ class LLaMa_Transformer_XL(nn.Module):
             if pn.endswith('proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
    
-    def reset_indices(self, reset_indices, bs):
-
-        for layer in self.layers:
-            layer.attention.reset_indices(reset_indices, bs) 
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -356,6 +352,11 @@ class LLaMa_Transformer_XL(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             #torch.nn.init.xavier_normal_(module.weight)
+            
+    def reset_indices(self, reset_indices, bs):
+
+        for layer in self.layers:
+            layer.attention.reset_indices(reset_indices, bs) 
     
     def forward(self, q, k, v, causal, mask=None):
 

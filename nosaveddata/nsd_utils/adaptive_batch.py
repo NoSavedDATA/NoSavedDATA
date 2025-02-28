@@ -30,10 +30,13 @@ class AdaptiveBatchRecorder:
     def start_groups(self, model):
 
         for name, param in model.named_parameters():
-            self.groups[self.param_group_name(name)] = [torch.tensor(90/57.3,device='cuda', dtype=torch.float)]
-            self.group_deltas[self.param_group_name(name)] = [torch.tensor(0,device='cuda', dtype=torch.float)]            
+            self.groups[self.param_group_name(name)] = []
+            self.group_deltas[self.param_group_name(name)] = [torch.tensor(0,device='cuda', dtype=torch.float)]
 
-        self.tgt_group = random.choice(list(self.groups.keys()))
+
+        keys = list(self.groups.keys())
+        self.tgt_group = random.choice(keys)
+        print(f"Adaptive batch recorder has {len(keys)} groups.")
 
 
     def gumbel_noise(self, n):
@@ -49,12 +52,12 @@ class AdaptiveBatchRecorder:
         cosine = (dot_product / norms).clamp(-1.0, 1.0)
         angle = torch.arccos(cosine)
 
-        return angle.mean()#*57.3
+        return angle.mean()*57.3
 
     def __call__(self, model):
 
-        if self.steps_since_update>0:
-            
+        if self.steps_since_update > 0:
+            # print(f"append []")
             self.groups[self.tgt_group].append([])
         # print(f"TGT GROUP: {self.tgt_group}")
 
@@ -65,14 +68,18 @@ class AdaptiveBatchRecorder:
             if param.grad is not None:
                 if name in self.acc_grads.keys():
                     
-                    if group==self.tgt_group:
-                        
-                        grad_angle = self.angle_between(self.acc_grads[name], param.grad)
 
+                    if group==self.tgt_group:
+                        param_pre = self.acc_grads[name]
+
+                        self.acc_grads[name] += param.grad
+                        grad_angle = self.angle_between(param_pre, self.acc_grads[name])
                         
                         self.groups[group][-1].append(grad_angle)
 
-                    self.acc_grads[name] += param.grad
+
+                    
+
                 else:
                     self.acc_grads[name]  = param.grad
             else:
@@ -84,9 +91,13 @@ class AdaptiveBatchRecorder:
         self.steps_since_update += 1
 
         if self.steps_since_update>1:
-            self.groups[self.tgt_group][-1] = torch.stack(self.groups[self.tgt_group][-1]).mean()
+            self.groups[self.tgt_group][-1] = torch.stack(self.groups[self.tgt_group][-1]).mean() # mean group
 
             min_a = torch.stack(self.groups[self.tgt_group]).min()
+
+            print(f"{self.groups[self.tgt_group]}")
+            print(f"{self.groups[self.tgt_group][-1]}")
+            print(f"{min_a*self.alpha}")
 
 
             if (self.groups[self.tgt_group][-1] > min_a*self.alpha and self.steps_since_update > self.min_steps) or self.steps_since_update > self.max_steps:
@@ -126,7 +137,7 @@ class AdaptiveBatchRecorder:
 
         sample = torch.multinomial(p,1)
 
-        
+        self.groups[self.tgt_group] = []
         self.tgt_group = list(self.groups.keys())[sample]
 
         # print(f"new group is: {self.tgt_group}")
