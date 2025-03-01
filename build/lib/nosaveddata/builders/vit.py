@@ -27,9 +27,8 @@ class ViT(nsd_Module):
         self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_gpt)
 
         self.cls = nn.Embedding(1,d_model)
-        self.transformer = Transformer_NoDATA(d_model, num_blks, nhead, seq_len=self.N,
-                 dropout = dropout, bias=bias, report_params_count=False,
-                 ffn_mult=ffn_mult, stochastic_depth=stochastic_depth)
+        self.transformer = GPT_Transformer(d_model, d_model*ffn_mult, nhead, num_blks, seq_len=self.N,
+                 dropout = dropout, bias=bias, report_params_count=False)
 
         self.cls.apply(init_gpt)
 
@@ -54,7 +53,7 @@ class ViT(nsd_Module):
 
     def masked(self, X, mask):
         
-        X = self.transformer.masked(X, mask, is_causal=False)
+        X = self.transformer.masked(X, None, mask, is_causal=False)
 
         return X
     
@@ -73,13 +72,11 @@ class ViT_Temporal(nsd_Module): # Processes X stacked_frames separately, then pr
         
         self.in_proj = MLP(first_channel*self.patches, out_hiddens=d_model, last_init=init_xavier)
         
-        self.transformer = Transformer_NoDATA(d_model, num_blks, nhead, seq_len=self.N,
-                 dropout = dropout, bias=bias, report_params_count=False,
-                 ffn_mult=ffn_mult, scale_init=12, stochastic_depth=stochastic_depth)
+        self.transformer = Transformer_NoDATA(d_model, d_model*ffn_mult, nhead, num_blks, seq_len=self.N,
+                 dropout = dropout, bias=bias, report_params_count=False)
         
-        self.temporal_aggr = Transformer_NoDATA(d_model, temporal_aggr_num_blks, nhead, seq_len=self.N*stacked_frames,
-                 dropout = dropout, bias=bias, report_params_count=False,
-                 ffn_mult=ffn_mult, scale_init=12, stochastic_depth=stochastic_depth)
+        self.temporal_aggr = GPT_Transformer(d_model, d_model*ffn_mult, nhead, temporal_aggr_num_blks, seq_len=self.N*stacked_frames,
+                 dropout = dropout, bias=bias, report_params_count=False)
         
         if report_params_count:
             params_count(self, 'ViT Temporal')
@@ -103,7 +100,7 @@ class ViT_Temporal(nsd_Module): # Processes X stacked_frames separately, then pr
 
     def masked(self, X, mask):
         
-        X = self.transformer.masked(X, mask, is_causal=False).view(-1, self.stacked_frames*mask.shape[1], self.d_model)
+        X = self.transformer.masked(X, None, mask, is_causal=False).view(-1, self.stacked_frames*mask.shape[1], self.d_model)
         X = self.temporal_aggr(X, is_causal=False)
         
         return X[:,-mask.shape[1]:]
@@ -152,9 +149,8 @@ class ViT_IWM(nsd_Module):
         self.predictor_proj = MLP(self.d_encoder, out_hiddens=d_predictor, last_init=init_gpt) \
                               if d_predictor!=self.d_encoder else nn.Identity()
 
-        self.predictor = Transformer_NoDATA(d_predictor, num_blks_predictor, nhead_predictor, seq_len=self.N+1,
-                 dropout = dropout, bias=bias, report_params_count=False,
-                 ffn_mult=ffn_mult, scale_init=num_blks_predictor, stochastic_depth=stochastic_depth)
+        self.predictor = Transformer_NoDATA(d_predictor, d_predictor*ffn_mult, nhead_predictor, num_blks_predictor, seq_len=self.N+1,
+                 dropout = dropout, bias=bias, report_params_count=False)
 
 
         self.predictor_out_proj = MLP(d_predictor, out_hiddens=self.d_encoder, last_init=init_gpt) \

@@ -667,8 +667,10 @@ class Transformer_Block_NoLN(nsd_Module):
         
         return q
 
+
+
 class Transformer_NoDATA(nn.Module):
-    def __init__(self, d_model, ffn_dim, num_blks, nhead, seq_len,
+    def __init__(self, d_model, ffn_dim, nhead, num_blks, seq_len,
                  dropout = 0.1, bias=False, report_params_count=True,
                  stochastic_depth=1.0, scale_init=1):
         super().__init__()
@@ -703,7 +705,7 @@ class Transformer_NoDATA(nn.Module):
         self.apply(init_xavier)
         for pn, p in self.named_parameters():
            if pn.endswith('proj.weight') or pn.endswith('W_v.weight') or pn.endswith('fc.weight') or pn.endswith('pos_encoding.weight'):
-               torch.nn.init.xavier_uniform_(p, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
+               torch.nn.init.xavier_uniform_(p, gain=1/math.sqrt(2 * self.scale_init))
         self.apply(self._init_weights)
         
 
@@ -713,12 +715,9 @@ class Transformer_NoDATA(nn.Module):
 
     def _init_weights(self, module):
         if isinstance(module, nn.Embedding):
-            #torch.nn.init.normal_(module.weight, mean=0.0, std=1/math.sqrt(self.num_hiddens))
-            torch.nn.init.xavier_uniform_(module.weight, gain=(torch.tensor(4*self.scale_init,dtype=torch.float)).pow(-1/4))
-        
-        
-
-    
+            torch.nn.init.uniform_(module.weight, -0.05, 0.05)
+            # torch.nn.init.xavier_uniform_(module.weight, gain=1/math.sqrt(2 * self.scale_init))
+            
 
     def forward(self, q, k=None, is_causal=True, mask=None):
 
@@ -744,7 +743,7 @@ class Transformer_NoDATA(nn.Module):
             
         return self.final_ln(q)
     
-    def masked(self, X, gather_mask, is_causal=True, mask=None):
+    def masked(self, q, k, gather_mask, is_causal=True, mask=None):
 
         pos = torch.arange(0, self.seq_len, dtype=torch.long, device='cuda')
         pos_emb = self.pos_encoding(pos)
@@ -758,7 +757,7 @@ class Transformer_NoDATA(nn.Module):
         for i, blk in enumerate(self.blks):
             q = blk(q, k, is_causal, mask)
 
-        q = self.final_ln(X)
+        q = self.final_ln(q)
         
         return q
 
@@ -775,12 +774,12 @@ def modulate(x, shift, scale):
 
 
 class DiT_Block(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.0, bias=False, ffn_mult=4):
+    def __init__(self, d_model, ffn_hiddens, nhead, dropout=0.0, bias=False):
         super().__init__()
         self.ln_1 = LayerNormNoBias(d_model, bias=bias)
-        self.attn = Attention(d_model, nhead, bias, dropout)
+        self.attention = Attention(d_model, nhead, bias, dropout)
         self.ln_2 = LayerNormNoBias(d_model, bias=bias)
-        self.mlp = FFN(d_model, dropout, bias, ffn_mult)
+        self.mlp = FFN(d_model, ffn_hiddens, dropout, bias)
         
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
@@ -788,7 +787,7 @@ class DiT_Block(nn.Module):
         )
 
         self.ln_1.apply(init_gpt)
-        self.attn.apply(init_gpt)
+        self.attention.apply(init_gpt)
         self.ln_2.apply(init_gpt)
         self.mlp.apply(init_gpt)
         self.adaLN_modulation.apply(init_zeros)
@@ -798,7 +797,7 @@ class DiT_Block(nn.Module):
         
         x_ln = modulate(self.ln_1(x), shift_msa, scale_msa)
         
-        x = x + (1+gate_msa[:,None]) * self.attn(x_ln, x_ln, x_ln, is_causal=False)
+        x = x + (1+gate_msa[:,None]) * self.attention(x_ln, x_ln, is_causal=False)
         x = x + (1+gate_mlp[:,None]) * self.mlp(modulate(self.ln_2(x), shift_mlp, scale_mlp))
         
         return x
@@ -810,12 +809,10 @@ class DiT_Block(nn.Module):
     
     
 class DiT_Transformer(nsd_Module):
-    def __init__(self, d_model, num_blks, nhead, seq_len,
-                 dropout = 0.1, bias=False, report_params_count=True,
-                 ffn_mult=4, scale_init=1):
+    def __init__(self, d_model, ffn_hiddens, num_blks, nhead, seq_len,
+                 dropout = 0.1, bias=False, report_params_count=True):
         super().__init__()
-        if scale_init==1:
-            scale_init=num_blks
+        
 
         self.pos_encoding = nn.Embedding(seq_len, d_model)
         
@@ -826,7 +823,7 @@ class DiT_Transformer(nsd_Module):
         self.blks = nn.Sequential()
         for i in range(num_blks):
             self.blks.add_module("block"+str(i), DiT_Block(
-                                d_model, nhead, dropout, bias=False, ffn_mult=ffn_mult))
+                                d_model, ffn_hiddens, nhead, dropout, bias=False))
             
         
         #nn.init.xavier_uniform_(self.pos_encoding[0].weight)
@@ -841,7 +838,15 @@ class DiT_Transformer(nsd_Module):
         if report_params_count:
             params_to_count = [p for p in self.parameters() if p.requires_grad]
             print(f'GPT Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
-    
+
+
+    def set_self_attention(self):
+        for blk in self.blks:
+            blk.attention.set_self_attention()
+    def set_cross_attention(self):
+        for blk in self.blks:
+            blk.attention.set_cross_attention()
+
     def init_weights(self):
         
         # Zero-out adaLN modulation layers in DiT blocks:
