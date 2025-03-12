@@ -54,7 +54,36 @@ class AdaptiveBatchRecorder:
 
         return angle.mean()*57.3
 
-    def __call__(self, model):
+     
+    def sample_group(self):
+        v = torch.stack(self.groups[self.tgt_group])
+
+        a_min, a_max = v.min(), v.max()
+
+        self.group_deltas[self.tgt_group].append(a_max - a_min)
+        self.group_deltas[self.tgt_group] = self.group_deltas[self.tgt_group][-self.avg_by:]
+
+        # print(f"{self.group_deltas}")
+
+        a_mean = torch.stack([torch.stack(v).mean() for v in self.group_deltas.values()])
+
+        # print(f"A MEAN: {a_mean}")
+
+        a_star = a_mean + self.gumbel_noise(a_mean.shape[-1])
+
+        logits = a_star.abs().pow(self.beta)
+
+        p = logits / logits.sum()
+
+
+        sample = torch.multinomial(p,1)
+
+        self.groups[self.tgt_group] = []
+        self.tgt_group = list(self.groups.keys())[sample]
+
+        # print(f"new group is: {self.tgt_group}")
+
+    def __call__(self, model): # After loss.backward()
 
         if self.steps_since_update > 0:
             # print(f"append []")
@@ -95,9 +124,9 @@ class AdaptiveBatchRecorder:
 
             min_a = torch.stack(self.groups[self.tgt_group]).min()
 
-            print(f"{self.groups[self.tgt_group]}")
-            print(f"{self.groups[self.tgt_group][-1]}")
-            print(f"{min_a*self.alpha}")
+            # print(f"{self.groups[self.tgt_group]}")
+            # print(f"{self.groups[self.tgt_group][-1]}")
+            # print(f"{min_a*self.alpha}")
 
 
             if (self.groups[self.tgt_group][-1] > min_a*self.alpha and self.steps_since_update > self.min_steps) or self.steps_since_update > self.max_steps:
@@ -113,31 +142,3 @@ class AdaptiveBatchRecorder:
             param.grad = self.acc_grads[name] / self.steps_since_update
 
         self.steps_since_update = 1
-     
-    def sample_group(self):
-        v = torch.stack(self.groups[self.tgt_group])
-
-        a_min, a_max = v.min(), v.max()
-
-        self.group_deltas[self.tgt_group].append(a_max - a_min)
-        self.group_deltas[self.tgt_group] = self.group_deltas[self.tgt_group][-self.avg_by:]
-
-        # print(f"{self.group_deltas}")
-
-        a_mean = torch.stack([torch.stack(v).mean() for v in self.group_deltas.values()])
-
-        # print(f"A MEAN: {a_mean}")
-
-        a_star = a_mean + self.gumbel_noise(a_mean.shape[-1])
-
-        logits = a_star.abs().pow(self.beta)
-
-        p = logits / logits.sum()
-
-
-        sample = torch.multinomial(p,1)
-
-        self.groups[self.tgt_group] = []
-        self.tgt_group = list(self.groups.keys())[sample]
-
-        # print(f"new group is: {self.tgt_group}")

@@ -21,3 +21,26 @@ class Lookahead:
             for ema_param, net_param in zip(self.net_ema.values(), net.state_dict().values()):
                 ema_param.lerp_(net_param, 1-decay)
                 net_param.copy_(ema_param)
+
+
+
+def AdamW_wd(model, lr, weight_decay=0.01, betas=(0.9, 0.98)):
+
+
+    decay_params = []
+    no_decay_params = []
+    for param in model.parameters():
+        if param.dim()>=2:
+            decay_params.append(param)
+        else:
+            no_decay_params.append(param)
+
+    optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': no_decay_params, 'weight_decay': 0.0}
+        ]        
+
+    return torch.optim.AdamW(optim_groups,
+                                    lr=lr, eps=1.5e-4, betas=betas, fused=True)
+
+

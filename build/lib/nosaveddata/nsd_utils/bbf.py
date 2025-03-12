@@ -4,11 +4,10 @@
 import torch
 
 
+
 def network_ema(target_network, new_network, alpha=0.5):
-    for (param_name, param_target), param_new  in zip(target_network.cuda().named_parameters(), new_network.parameters()):
-        if 'ln' in param_name: #layer norm
-            param_target.data = param_new.data.clone()
-        else:
+    with torch.no_grad():
+        for (param_name, param_target), param_new  in zip(target_network.cuda().named_parameters(), new_network.parameters()):
             param_target.data = alpha * param_target.data + (1 - alpha) * param_new.data.clone()
 
 

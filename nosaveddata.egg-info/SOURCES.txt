@@ -40,6 +40,7 @@ nosaveddata/nsd_utils/bbf.py
 nosaveddata/nsd_utils/cv.py
 nosaveddata/nsd_utils/dreamer.py
 nosaveddata/nsd_utils/einstein.py
+nosaveddata/nsd_utils/formulas.py
 nosaveddata/nsd_utils/networks.py
 nosaveddata/nsd_utils/nsd_csv.py
 nosaveddata/nsd_utils/optim.py

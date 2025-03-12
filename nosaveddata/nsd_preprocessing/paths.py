@@ -9,6 +9,10 @@ def fname_of(path):
 def fexists(path):
     return os.path.exists(path)
 
+def fremove(path):
+    if os.path.exists(path):
+        os.remove(path)
+
 def path_with_idx(path,idx):
     return path.split('.')[0] + '_' + str(idx) + '.' + path.split('.')[1]
 

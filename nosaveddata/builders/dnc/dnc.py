@@ -25,7 +25,7 @@ class DNC(nn.Module):
         
         hparams = {'backbone_activation': 'silu', 'backbone_units': W, 'backbone_layers': 1, 'backbone_dr': dropout}
 
-        self.controller_aux = CfcCell(W, W, seq_len, hparams)
+        
         self.controller = CfcCell(W+R*W, W, seq_len, hparams)
         
         # Create memory
