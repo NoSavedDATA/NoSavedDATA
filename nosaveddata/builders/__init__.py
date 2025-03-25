@@ -11,10 +11,12 @@ from .resnet import *
 from .vit import *
 from .token_learner import *
 from .vq_vae import *
+from .fsq import *
 
 from .cnn_modules import *
 
 from .moe import *
+from .norm import *
 from .transformer import *
 from .transformer_llama import *
 from .transformer_llama_extensions import *

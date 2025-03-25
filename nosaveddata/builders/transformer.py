@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import math
 
 from .weight_init import *
+from .norm import RMSNorm, LayerNormNoBias
 # from torch.nn.attention import SDPBackend, sdpa_kernel
 from ..nsd_utils.save_hypers import nsd_Module
 
@@ -22,26 +23,28 @@ class FusedGELU(nn.Module):
         return fused_gelu(x)
 
 
-class LayerNormNoBias(nn.Module):
-    """ LayerNormNoBias but with an optional bias. PyTorch doesn't support simply bias=False """
-
-    def __init__(self, d_model, bias=False):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(d_model))
-        self.bias = nn.Parameter(torch.zeros(d_model)) if bias else None
-
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
-
-
-    
+       
 class Attention(nsd_Module):
-    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1):
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1, kv_heads=0):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
+
+        if kv_heads==0:
+            self.kv_heads=nhead
+
+        self.group_query_ratio = nhead//self.kv_heads
+
+        assert nhead/self.kv_heads == self.group_query_ratio, "Group Query ratio must be an integer."
+
         
-        self.W_qkv = nn.Linear(d_model, 3*d_model, bias=bias)
-        self.Conv_qkv = nn.Conv1d(3*d_model, 3*d_model, 1, 1, 0, bias=bias, groups=3*d_model)
+        self.head_dim = d_model//nhead
+        self.d_kv = self.kv_heads*self.head_dim
+
+
+
+        self.W_qkv = nn.Linear(d_model, d_model+self.d_kv*2, bias=bias)
+        self.Conv_qkv = nn.Conv1d(d_model+self.d_kv*2, d_model+self.d_kv*2, 1, 1, 0, bias=bias, groups=d_model+self.d_kv*2)
+
         # output projection
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         # regularization
@@ -54,17 +57,19 @@ class Attention(nsd_Module):
 
     
         self.attention = self.self_attention
+        if self.kv_heads!=self.head_dim:
+            self.attention = self.group_query_self_attention
 
     def _init_weights(self):
-        self.W_qkv.apply(init_gpt)
-        self.Conv_qkv.apply(init_gpt)
+        self.W_qkv.apply(init_xavier)
+        self.Conv_qkv.apply(init_xavier)
 
         # self.proj.apply(init_xavier)
 
         for pn, p in self.named_parameters():
            if pn.endswith('proj.weight'):
-            #    torch.nn.init.xavier_uniform_(p, gain=1/math.sqrt(2 * self.num_blks))
-            torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * self.num_blks))
+                torch.nn.init.xavier_uniform_(p, gain=1/math.sqrt(2 * self.num_blks))
+                # torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * self.num_blks))
 
     def set_self_attention(self):
         self.attention = self.self_attention
@@ -77,6 +82,17 @@ class Attention(nsd_Module):
         bs, N, _ = q.shape
         x = self.W_qkv(q).view(bs*N,-1,1)
         q, k, v = self.Conv_qkv(x).squeeze().view(bs,N,-1).split(self.d_model,-1)
+        return q, k, v, mask
+
+    def group_query_self_attention(self, q, k, mask):
+        bs, N, _ = q.shape
+        kv = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).view(bs*N,-1,1)
+        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None).view(bs*N,-1,1)
+
+        q = F.conv1d(q, self.Conv_qkv.weight[:self.d_model], self.Conv_qkv.bias[:self.d_model] if self.Conv_qkv.bias!=None else None,
+                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_model).squeeze().view(bs,N,-1)
+        k, v = F.conv1d(kv, self.Conv_qkv.weight[self.d_model:], self.Conv_qkv.bias[self.d_model:] if self.Conv_qkv.bias!=None else None,
+                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_kv*2).squeeze().view(bs,N,-1).split(self.d_kv,-1)
         return q, k, v, mask
 
     def cross_attention(self, q, k, mask):
@@ -106,17 +122,19 @@ class Attention(nsd_Module):
         q = F.normalize(q, 2, dim=-1, eps=1e-5)
         k = F.normalize(k, 2, dim=-1, eps=1e-5)
         
-        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, -1, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
-
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.group_query_ratio, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
+        k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
+        v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
+        
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         
         # efficient attention using Flash Attention CUDA kernels        
 
         with torch.backends.cuda.sdp_kernel():
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
-        
+        y = y.view(B, self.nhead, T, -1)
+
+
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
@@ -126,8 +144,8 @@ class Attention(nsd_Module):
 
 
 class Titan_Attention(Attention):
-    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1):
-        super().__init__(d_model, nhead, bias, dropout, seq_len, cond_prob)
+    def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1, kv_heads=1):
+        super().__init__(d_model, nhead, bias, dropout, seq_len, cond_prob, num_blks, kv_heads)
         # key, query, value projections for all heads, but in a batch
         self.nhead = nhead
         self.bias = bias
@@ -210,8 +228,8 @@ class Titan_Attention(Attention):
         v_pre = v[...,-T:,:]
 
         q = q.view(B, T*2, self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, -1,  self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, -1,  self.nhead, C // self.nhead).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2).repeat_interleave(self.group_query_ratio,1) # (B, nh, T, hs)
+        v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2).repeat_interleave(self.group_query_ratio,1) # (B, nh, T, hs)
 
 
 
@@ -231,7 +249,7 @@ class Titan_Attention(Attention):
 
         return y
 
-class Attention_XL(nn.Module):
+class Attention_XL(Attention):
     def __init__(self, d_model, num_heads, seq_len, bias=False, dropout=0.1):
         super().__init__()
         # key, query, value projections for all heads, but in a batch
@@ -239,11 +257,10 @@ class Attention_XL(nn.Module):
         self.num_heads = num_heads
         self.seq_len = seq_len
 
-        self.k_xl_positinal_emb = nn.Embedding(self.seq_len, d_model)
-        self.W_qkv = nn.Linear(d_model, 3*d_model, bias=bias)
+        self.k_xl_positinal_emb = nn.Linear(seq_len, d_model)
 
         # output projection
-        self.proj = nn.Linear(d_model, d_model, bias=bias)
+        
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
@@ -256,26 +273,13 @@ class Attention_XL(nn.Module):
 
         self.attention = self.self_attention
 
-    def set_self_attention(self):
-        self.attention = self.self_attention
-    def set_cross_attention(self):
-        self.attention = self.cross_attention
-    
-    def self_attention(self, q, k):
-        return self.W_qkv(q).split(self.d_model,-1)
-
-    def cross_attention(self, q, k):
-        q = F.linear(q, self.W_qkv.weight[:,:self.d_model], self.W_qkv.bias)
-
-        k, v = F.linear(k, self.W_qkv.weight[:,self.d_model:], self.W_qkv.bias).split(self.d_model,-1)
-        return q, k, v
 
     @torch.no_grad()
     def reset_indices(self, reset_indices, bs):
 
         if self.k_xl==None or not isinstance(reset_indices, torch.Tensor):
-            self.k_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda')
-            self.v_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda')
+            self.k_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda', dtype=torch.float)
+            self.v_xl = torch.zeros(bs, self.seq_len, self.d_model, device='cuda', dtype=torch.float)
         else:
             # print(f"RESET: {self.k_xl.shape, reset_indices.shape}")
             # print(f"{reset_indices}")
@@ -287,15 +291,17 @@ class Attention_XL(nn.Module):
     def forward(self, q, k, is_causal, mask=None):
         B, T, C = q.size()
         
-        q, k, v = self.attention(q, k)
+        q, k, v, mask = self.attention(q, k, mask)
 
+        q = F.normalize(q, 2, dim=-1, eps=1e-5)
+        k = F.normalize(k, 2, dim=-1, eps=1e-5)
 
         
         k_pre = k.detach()
         v_pre = v.detach()
 
 
-        self.k_xl = self.k_xl + self.k_xl_positinal_emb(torch.arange(0,self.k_xl.shape[-2],device='cuda'))[None,:]
+        # self.k_xl = self.k_xl.to(q.dtype) + self.k_xl_positinal_emb(torch.arange(0,self.k_xl.shape[-2],device=q.device,dtype=torch.long))[None,:]
 
 
         
@@ -558,9 +564,10 @@ class FFN(nn.Module):
 class GPT_Block(nn.Module):
     def __init__(self, d_model, ffn_dim, nhead, dropout=0.0, bias=False, seq_len=8):
         super().__init__()
-        self.ln_1 = LayerNormNoBias(d_model, bias=bias)
+        # self.ln_1 = LayerNormNoBias(d_model, bias=bias)
+        self.ln_1 = RMSNorm(d_model)
         self.attention = Attention(d_model, nhead, bias, dropout, seq_len)
-        self.ln_2 = LayerNormNoBias(d_model, bias=bias)
+        self.ln_2 = RMSNorm(d_model)
         self.mlp = FFN(d_model, ffn_dim, dropout, bias)
 
     def forward(self, q, k, is_causal=True, mask=None):
@@ -584,7 +591,7 @@ class GPT_Transformer(nsd_Module):
         #                                  LayerNormNoBias(d_model)) #Stable Embedding Layer # Requires One Hot
         self.pos_encoding = nn.Embedding(seq_len, d_model)
         
-        self.final_ln = LayerNormNoBias(d_model)
+        self.ln_1 = RMSNorm(d_model)
         self.start_dropout = nn.Dropout(dropout)
 
         self.blks = nn.ModuleList()

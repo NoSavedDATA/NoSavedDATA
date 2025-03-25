@@ -12,9 +12,11 @@ nosaveddata/builders/cfc.py
 nosaveddata/builders/cnn_modules.py
 nosaveddata/builders/efficientzero.py
 nosaveddata/builders/film.py
+nosaveddata/builders/fsq.py
 nosaveddata/builders/mcts.py
 nosaveddata/builders/mlp.py
 nosaveddata/builders/moe.py
+nosaveddata/builders/norm.py
 nosaveddata/builders/resnet.py
 nosaveddata/builders/token_learner.py
 nosaveddata/builders/transformer.py
