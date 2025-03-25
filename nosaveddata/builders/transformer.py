@@ -591,7 +591,7 @@ class GPT_Transformer(nsd_Module):
         #                                  LayerNormNoBias(d_model)) #Stable Embedding Layer # Requires One Hot
         self.pos_encoding = nn.Embedding(seq_len, d_model)
         
-        self.ln_1 = RMSNorm(d_model)
+        self.final_ln = RMSNorm(d_model)
         self.start_dropout = nn.Dropout(dropout)
 
         self.blks = nn.ModuleList()
