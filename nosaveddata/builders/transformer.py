@@ -280,7 +280,6 @@ class Attention(nsd_Module):
         k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
         v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
 
-        print(f"q {q.shape}")
 
         q = F.normalize(q, 2, dim=-1, eps=1e-5)
         k = F.normalize(k, 2, dim=-1, eps=1e-5)
