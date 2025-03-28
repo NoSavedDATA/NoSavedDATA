@@ -33,6 +33,9 @@ nosaveddata/builders/weight_init.py
 nosaveddata/builders/dnc/__init__.py
 nosaveddata/builders/dnc/dnc.py
 nosaveddata/builders/dnc/memory.py
+nosaveddata/builders/longformer/__init__.py
+nosaveddata/builders/longformer/attention.py
+nosaveddata/builders/longformer/masking.py
 nosaveddata/nsd_preprocessing/__init__.py
 nosaveddata/nsd_preprocessing/paths.py
 nosaveddata/nsd_preprocessing/vision.py
