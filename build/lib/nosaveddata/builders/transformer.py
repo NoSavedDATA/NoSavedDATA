@@ -23,6 +23,22 @@ class FusedGELU(nn.Module):
         return fused_gelu(x)
 
 
+class KV_Cache:
+    def __init__(self):
+        self.k_cache = None
+        self.v_cache = None
+    
+    def set_cache(self, k, v):
+        self.k_cache = k
+        self.v_cache = v
+    
+    def get_cache(self):
+        return self.k_cache, self.v_cache
+
+    def clear_cache(self):
+        self.k_cache = None
+        self.v_cache = None
+
 class GPT_Attention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1):
         super().__init__()
@@ -37,6 +53,9 @@ class GPT_Attention(nsd_Module):
         self.head_dim = d_model//nhead
         self.d_kv = self.kv_heads*self.head_dim
 
+    
+
+        self.kv_cache = KV_Cache()
 
 
         self.W_qkv = nn.Linear(d_model, d_model+self.d_kv*2, bias=bias)
@@ -54,6 +73,7 @@ class GPT_Attention(nsd_Module):
     
         self.attention = self.self_attention
 
+
     def _init_weights(self):
         self.W_qkv.apply(init_xavier)
         self.Conv_qkv.apply(init_xavier)
@@ -65,18 +85,52 @@ class GPT_Attention(nsd_Module):
                 torch.nn.init.xavier_uniform_(p, gain=1/math.sqrt(2 * self.num_blks))
                 # torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * self.num_blks))
 
+    def clear_cache(self):
+        self.kv_cache.clear_cache()
+
     def set_self_attention(self):
         self.attention = self.self_attention
     def set_cross_attention(self):
         self.attention = self.cross_attention
     def set_cat_attention(self):
         self.attention = self.cat_attention
+    def set_cache_attention(self):
+        self.attention = self.cache_attention
     
     def self_attention(self, q, k, mask):
         bs, N, _ = q.shape
         q, k, v = self.W_qkv(q).split(self.d_model,-1)
         return q, k, v, mask
 
+    def cache_attention(self, q, k, mask):
+        bs, N, _ = q.shape
+
+        if self.kv_cache.k_cache==None:
+            q, k, v, mask = self.self_attention(q, k, mask)
+            self.kv_cache.set_cache(k, v)
+        else:
+
+            last_k, last_v = F.linear(q[:,-1][:,None], self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias!=None else None).split(self.d_model,-1)
+            k, v = self.kv_cache.get_cache()
+
+
+            k = torch.cat((k, last_k), -2) 
+            v = torch.cat((v, last_v), -2) 
+
+            self.kv_cache.set_cache(k, v)
+
+            q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias!=None else None)
+
+
+
+
+        return q, k, v, mask
+
+    def cross_attention(self, q, k, mask):
+        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model])
+
+
+        return q, k, v, mask
 
     def cross_attention(self, q, k, mask):
         q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model])
@@ -218,8 +272,7 @@ class Attention(nsd_Module):
         
         q, k, v, mask = self.attention(q, k, mask)
         
-        q = F.normalize(q, 2, dim=-1, eps=1e-5)
-        k = F.normalize(k, 2, dim=-1, eps=1e-5)
+
         
 
 
@@ -227,6 +280,10 @@ class Attention(nsd_Module):
         k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
         v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
 
+        print(f"q {q.shape}")
+
+        q = F.normalize(q, 2, dim=-1, eps=1e-5)
+        k = F.normalize(k, 2, dim=-1, eps=1e-5)
 
         
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
@@ -851,6 +908,12 @@ class GPT_Transformer(nsd_Module):
     def set_cat_attention(self):
         for blk in self.blks:
             blk.attention.set_cat_attention()
+    def set_cache_attention(self):
+        for blk in self.blks:
+            blk.attention.set_cache_attention()
+    def clear_cache(self):
+        for blk in self.blks:
+            blk.attention.clear_cache()
         
     def forward(self, q, k=None, is_causal=True, mask=None):
 
