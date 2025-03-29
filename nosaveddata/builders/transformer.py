@@ -27,21 +27,52 @@ class FusedGELU(nn.Module):
         return fused_gelu(x)
 
 
-class KV_Cache:
-    def __init__(self):
-        self.k_cache = None
-        self.v_cache = None
+# class KV_Cache:
+#     def __init__(self):
+#         self.k_cache = torch.zeros()
+#         self.v_cache = 
     
-    def set_cache(self, k, v):
-        self.k_cache = k
-        self.v_cache = v
+#     def set_cache(self, k, v):
+#         self.k_cache = k
+#         self.v_cache = v
     
-    def get_cache(self):
-        return self.k_cache, self.v_cache
+#     def get_cache(self):
+#         return self.k_cache, self.v_cache
 
+#     def clear_cache(self):
+#         self.k_cache = None
+#         self.v_cache = None
+
+
+class KV_Cache(nn.Module):
+    def __init__(
+        self, max_batch_size, max_seq_len, n_heads, head_dim, dtype=torch.float32 # dtype=torch.bfloat16
+    ):
+        super().__init__()
+        cache_shape = (max_batch_size, max_seq_len, n_heads, head_dim)
+        self.register_buffer("k_cache", torch.zeros(cache_shape, dtype=dtype))
+        self.register_buffer("v_cache", torch.zeros(cache_shape, dtype=dtype))
+
+        self.first = False
+    
     def clear_cache(self):
-        self.k_cache = None
-        self.v_cache = None
+        self.first = True
+
+    def update(self, input_pos, k_val, v_val):
+        # input_pos: [S], k_val: [B, H, S, D]
+
+        k_out = self.k_cache
+        v_out = self.v_cache
+        if self.first:
+            k_out[:, :, :input_pos] = k_val
+            v_out[:, :, :input_pos] = v_val
+            self.first = False
+        else:
+            k_out[:, input_pos] = k_val
+            v_out[:, input_pos] = v_val
+
+        return k_out, v_out
+
 
 class GPT_Attention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1):
@@ -59,7 +90,8 @@ class GPT_Attention(nsd_Module):
 
     
 
-        self.kv_cache = KV_Cache()
+        # self.kv_cache = KV_Cache()
+        self.kv_cache = KV_Cache(1, seq_len, nhead, d_model//nhead)
 
 
         self.W_qkv = nn.Linear(d_model, d_model+self.d_kv*2, bias=bias)
@@ -77,6 +109,7 @@ class GPT_Attention(nsd_Module):
     
         self.attention = self.self_attention
 
+        self.use_cache = False
 
     def _init_weights(self):
         self.W_qkv.apply(init_xavier)
@@ -94,52 +127,29 @@ class GPT_Attention(nsd_Module):
 
     def set_self_attention(self):
         self.attention = self.self_attention
+        self.use_cache=False
     def set_cross_attention(self):
         self.attention = self.cross_attention
     def set_cat_attention(self):
         self.attention = self.cat_attention
     def set_cache_attention(self):
         self.attention = self.cache_attention
+        self.use_cache = True
     
     def self_attention(self, q, k, mask):
         bs, N, _ = q.shape
         q, k, v = self.W_qkv(q).split(self.d_model,-1)
         return q, k, v, mask
 
-    def cache_attention(self, q, k, mask):
-        bs, N, _ = q.shape
+    # def cache_attention(self, q, k, mask):
+    #     bs, N, _ = q.shape
+    #     last_k, last_v = F.linear(q[:,-1][:,None], self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias!=None else None).split(self.d_model,-1)
+    #     q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias!=None else None)
+    #     return q, last_k, last_v, mask
 
-        if self.kv_cache.k_cache==None:
-            q, k, v, mask = self.self_attention(q, k, mask)
-            self.kv_cache.set_cache(k, v)
-        else:
-
-            last_k, last_v = F.linear(q[:,-1][:,None], self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias!=None else None).split(self.d_model,-1)
-            k, v = self.kv_cache.get_cache()
-
-
-            k = torch.cat((k, last_k), -2) 
-            v = torch.cat((v, last_v), -2) 
-
-            self.kv_cache.set_cache(k, v)
-
-            q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias!=None else None)
-
-
-
-
-        return q, k, v, mask
 
     def cross_attention(self, q, k, mask):
         q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model])
-
-
-        return q, k, v, mask
-
-    def cross_attention(self, q, k, mask):
-        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model])
-        
-
         k, v = F.linear(k, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:]).split(self.d_model,-1)
         return q, k, v, mask
 
@@ -159,16 +169,28 @@ class GPT_Attention(nsd_Module):
         B, T, C = q.size()
         
         q, k, v, mask = self.attention(q, k, mask)
-         
-        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.group_query_ratio, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
-        k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
-        v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
+
+
+        # print(f"qkv: {q.shape, k.shape, v.shape}")
         
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
+        k = k.view(B, -1, self.kv_heads, C // self.nhead) # (B, nh, T, hs)
+        v = v.view(B, -1, self.kv_heads, C // self.nhead) # (B, nh, T, hs)
+        # if self.use_cache:
+        #     self.kv_cache.update(k.shape[-2], k, v)
+        k = k.transpose(1, 2) # (B, nh, T, hs)
+        v = v.transpose(1, 2) # (B, nh, T, hs)
+        
+        # print(f"qkv: {q.shape, k.shape, v.shape}")
+        
+
+
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         
         # efficient attention using Flash Attention CUDA kernels        
 
         with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+        # with nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         y = y.view(B, self.nhead, T, -1)
 
@@ -237,22 +259,22 @@ class Attention(nsd_Module):
     def self_attention(self, q, k, mask):
         bs, N, _ = q.shape
         x = self.W_qkv(q).view(bs*N,-1,1)
-        # q, k, v = self.Conv_qkv(x).squeeze().view(bs,N,-1).split(self.d_model,-1)
+        q, k, v = self.Conv_qkv(x).squeeze().view(bs,N,-1).split(self.d_model,-1)
         return q, k, v, mask
 
     def group_query_self_attention(self, q, k, mask):
         bs, N, _ = q.shape
 
-        k, v = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).split(self.d_kv,-1)#.view(bs*N,-1,1)
-        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None)#.view(bs*N,-1,1)
+        # k, v = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).split(self.d_kv,-1)
+        # q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None)
  
 
-        # kv = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).view(bs*N,-1,1)
-        # q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None).view(bs*N,-1,1)
-        # q = F.conv1d(q, self.Conv_qkv.weight[:self.d_model], self.Conv_qkv.bias[:self.d_model] if self.Conv_qkv.bias!=None else None,
-        #              stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_model).squeeze().view(bs,N,-1)
-        # k, v = F.conv1d(kv, self.Conv_qkv.weight[self.d_model:], self.Conv_qkv.bias[self.d_model:] if self.Conv_qkv.bias!=None else None,
-        #              stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_kv*2).squeeze().view(bs,N,-1).split(self.d_kv,-1)
+        kv = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).view(bs*N,-1,1)
+        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None).view(bs*N,-1,1)
+        q = F.conv1d(q, self.Conv_qkv.weight[:self.d_model], self.Conv_qkv.bias[:self.d_model] if self.Conv_qkv.bias!=None else None,
+                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_model).squeeze().view(bs,N,-1)
+        k, v = F.conv1d(kv, self.Conv_qkv.weight[self.d_model:], self.Conv_qkv.bias[self.d_model:] if self.Conv_qkv.bias!=None else None,
+                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_kv*2).squeeze().view(bs,N,-1).split(self.d_kv,-1)
         
         return q, k, v, mask
 
@@ -416,7 +438,6 @@ class Titan_Attention(Attention):
 
         return y
 
-
 class LongAttention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1, slide_size=8, kv_heads=0):
         super().__init__()
@@ -474,20 +495,23 @@ class LongAttention(nsd_Module):
     
     def self_attention(self, q, k, mask):
         bs, N, _ = q.shape
-        x = self.W_qkv(q).view(bs*N,-1,1)
-        q, k, v = self.Conv_qkv(x).squeeze().view(bs,N,-1).split(self.d_model,-1)
+        q, k, v = self.W_qkv(q).split(self.d_model,-1)
+        # x = self.W_qkv(q).view(bs*N,-1,1)
+        # q, k, v = self.Conv_qkv(x).squeeze().view(bs,N,-1).split(self.d_model,-1)
         return q, k, v, mask
 
     def group_query_self_attention(self, q, k, mask):
         bs, N, _ = q.shape
-        kv = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).view(bs*N,-1,1)
-        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None).view(bs*N,-1,1)
 
+        k, v = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).split(self.d_kv,-1)
+        q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None)
 
-        q = F.conv1d(q, self.Conv_qkv.weight[:self.d_model], self.Conv_qkv.bias[:self.d_model] if self.Conv_qkv.bias!=None else None,
-                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_model).squeeze().view(bs,N,-1)
-        k, v = F.conv1d(kv, self.Conv_qkv.weight[self.d_model:], self.Conv_qkv.bias[self.d_model:] if self.Conv_qkv.bias!=None else None,
-                     stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_kv*2).squeeze().view(bs,N,-1).split(self.d_kv,-1)
+        # kv = F.linear(q, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias else None).view(bs*N,-1,1)
+        # q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias else None).view(bs*N,-1,1)
+        # q = F.conv1d(q, self.Conv_qkv.weight[:self.d_model], self.Conv_qkv.bias[:self.d_model] if self.Conv_qkv.bias!=None else None,
+        #              stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_model).squeeze().view(bs,N,-1)
+        # k, v = F.conv1d(kv, self.Conv_qkv.weight[self.d_model:], self.Conv_qkv.bias[self.d_model:] if self.Conv_qkv.bias!=None else None,
+        #              stride=self.Conv_qkv.stride, padding=self.Conv_qkv.padding, dilation=self.Conv_qkv.dilation, groups=self.d_kv*2).squeeze().view(bs,N,-1).split(self.d_kv,-1)
         return q, k, v, mask
 
 
@@ -499,38 +523,44 @@ class LongAttention(nsd_Module):
         
 
 
-        # q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.group_query_ratio, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
-        # k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
-        # v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
-
 
         q = q.view(B, T, self.nhead, C // self.nhead)
         k = k.view(B, -1, self.kv_heads, C // self.nhead)
         v = v.view(B, -1, self.kv_heads, C // self.nhead)
 
 
-        q = F.normalize(q, 2, dim=-1, eps=1e-5)
-        k = F.normalize(k, 2, dim=-1, eps=1e-5)
+        # q = F.normalize(q, 2, dim=-1, eps=1e-5)
+        # k = F.normalize(k, 2, dim=-1, eps=1e-5)
 
 
 
+        attn_w = sliding_chunks_matmul_qk(q, k, self.slide_size, padding_value=0, is_causal=is_causal)
+        attn_probs = F.softmax(attn_w, -1)
+        y = sliding_chunks_matmul_pv(attn_probs, v, self.slide_size)
 
-        # attn_w = sliding_chunks_matmul_qk(q, k, self.slide_size, padding_value=0, is_causal=is_causal)
-        # attn_probs = F.softmax(attn_w, -1)
-        # y = sliding_chunks_matmul_pv(attn_probs, v, self.slide_size)
-
-        # y = y.contiguous().view(B,T,C)
-
-
-        with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
-        y = y.view(B, self.nhead, T, -1)
+        y = y.contiguous().view(B,T,C)
 
 
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.group_query_ratio, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
+        # k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
+        # v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)        
+
+
+        # q = q.view(q.shape[0], q.shape[1], self.kv_heads, T//self.slide_size, self.slide_size, C//self.nhead).transpose(-3,-4)
+        # k = k.view(k.shape[0], k.shape[1], self.kv_heads, T//self.slide_size, self.slide_size, C//self.nhead).transpose(-3,-4)
+        # v = v.view(v.shape[0], v.shape[1], self.kv_heads, T//self.slide_size, self.slide_size, C//self.nhead).transpose(-3,-4)
+
+
+        # with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+        #     y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+        # y = y.transpose(-3,-4).contiguous()
+        # y = y.view(B, self.nhead, T, -1)
+
+
+        # y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
  
-
 
         # output projection
         y = self.resid_dropout(self.proj(y))
