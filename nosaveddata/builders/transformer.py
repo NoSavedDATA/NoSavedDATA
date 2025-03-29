@@ -178,8 +178,8 @@ class GPT_Attention(nsd_Module):
         v = v.view(B, -1, self.kv_heads, C // self.nhead) # (B, nh, T, hs)
         # if self.use_cache:
         #     self.kv_cache.update(k.shape[-2], k, v)
-        k = k.transpose(1, 2) # (B, nh, T, hs)
-        v = v.transpose(1, 2) # (B, nh, T, hs)
+        k = k.transpose(1, 2)[:,None] # (B, nh, T, hs)
+        v = v.transpose(1, 2)[:,None] # (B, nh, T, hs)
         
         # print(f"qkv: {q.shape, k.shape, v.shape}")
         

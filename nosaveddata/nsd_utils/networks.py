@@ -114,7 +114,7 @@ def save_checkpoint_ab_16(model, optimizer, adaptive_batch, sched, scaler, step,
 def load_checkpoint(model, optim, sched, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
     step = ckpt['step']
@@ -124,7 +124,7 @@ def load_checkpoint(model, optim, sched, path):
 def load_checkpoint_ab(model, optim, adaptive_batch, sched, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     adaptive_batch.__dict__.update(ckpt['adaptive_batch_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
@@ -135,7 +135,7 @@ def load_checkpoint_ab(model, optim, adaptive_batch, sched, path):
 def load_checkpoint_target(model, model_target, optim, sched, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     model_target.load_state_dict(ckpt['model_target_state_dict'])
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
@@ -149,7 +149,7 @@ def load_checkpoint_target(model, model_target, optim, sched, path):
 def load_checkpoint_16(model, optim, sched, scaler, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
     scaler.load_state_dict(ckpt['scaler_state_dict'])
@@ -160,7 +160,7 @@ def load_checkpoint_16(model, optim, sched, scaler, path):
 def load_checkpoint_ab_16(model, optim, adaptive_batch, sched, scaler, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     adaptive_batch.__dict__.update(ckpt['adaptive_batch_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
@@ -172,7 +172,7 @@ def load_checkpoint_ab_16(model, optim, adaptive_batch, sched, scaler, path):
 def load_checkpoint_16_target(model, model_target, optim, sched, scaler, path):
     ckpt = torch.load(path)
 
-    model.load_state_dict(ckpt['model_state_dict'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     model_target.load_state_dict(ckpt['model_target_state_dict'])
     optim.load_state_dict(ckpt['optimizer_state_dict'])
     sched.load_state_dict(ckpt['scheduler_state_dict'])
