@@ -74,6 +74,7 @@ class KV_Cache(nn.Module):
         return k_out, v_out
 
 
+
 class GPT_Attention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1):
         super().__init__()
@@ -88,10 +89,6 @@ class GPT_Attention(nsd_Module):
         self.head_dim = d_model//nhead
         self.d_kv = self.kv_heads*self.head_dim
 
-    
-
-        # self.kv_cache = KV_Cache()
-        self.kv_cache = KV_Cache(1, seq_len, nhead, d_model//nhead)
 
 
         self.W_qkv = nn.Linear(d_model, d_model+self.d_kv*2, bias=bias)
@@ -109,8 +106,6 @@ class GPT_Attention(nsd_Module):
     
         self.attention = self.self_attention
 
-        self.use_cache = False
-
     def _init_weights(self):
         self.W_qkv.apply(init_xavier)
         self.Conv_qkv.apply(init_xavier)
@@ -122,34 +117,23 @@ class GPT_Attention(nsd_Module):
                 torch.nn.init.xavier_uniform_(p, gain=1/math.sqrt(2 * self.num_blks))
                 # torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * self.num_blks))
 
-    def clear_cache(self):
-        self.kv_cache.clear_cache()
-
     def set_self_attention(self):
         self.attention = self.self_attention
-        self.use_cache=False
     def set_cross_attention(self):
         self.attention = self.cross_attention
     def set_cat_attention(self):
         self.attention = self.cat_attention
-    def set_cache_attention(self):
-        self.attention = self.cache_attention
-        self.use_cache = True
     
     def self_attention(self, q, k, mask):
         bs, N, _ = q.shape
         q, k, v = self.W_qkv(q).split(self.d_model,-1)
         return q, k, v, mask
 
-    # def cache_attention(self, q, k, mask):
-    #     bs, N, _ = q.shape
-    #     last_k, last_v = F.linear(q[:,-1][:,None], self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:] if self.W_qkv.bias!=None else None).split(self.d_model,-1)
-    #     q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model] if self.W_qkv.bias!=None else None)
-    #     return q, last_k, last_v, mask
-
 
     def cross_attention(self, q, k, mask):
         q = F.linear(q, self.W_qkv.weight[:self.d_model], self.W_qkv.bias[:self.d_model])
+        
+
         k, v = F.linear(k, self.W_qkv.weight[self.d_model:], self.W_qkv.bias[self.d_model:]).split(self.d_model,-1)
         return q, k, v, mask
 
@@ -169,28 +153,16 @@ class GPT_Attention(nsd_Module):
         B, T, C = q.size()
         
         q, k, v, mask = self.attention(q, k, mask)
-
-
-        # print(f"qkv: {q.shape, k.shape, v.shape}")
+         
+        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.group_query_ratio, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
+        k = k.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
+        v = v.view(B, -1, self.kv_heads, C // self.nhead).transpose(1, 2)[:,None] # (B, nh, T, hs)
         
-        q = q.view(B, T, self.nhead, C // self.nhead).transpose(1, 2).view(B, self.kv_heads, T, C//self.nhead) # (B, nh, T, hs)
-        k = k.view(B, -1, self.kv_heads, C // self.nhead) # (B, nh, T, hs)
-        v = v.view(B, -1, self.kv_heads, C // self.nhead) # (B, nh, T, hs)
-        # if self.use_cache:
-        #     self.kv_cache.update(k.shape[-2], k, v)
-        k = k.transpose(1, 2)[:,None] # (B, nh, T, hs)
-        v = v.transpose(1, 2)[:,None] # (B, nh, T, hs)
-        
-        # print(f"qkv: {q.shape, k.shape, v.shape}")
-        
-
-
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         
         # efficient attention using Flash Attention CUDA kernels        
 
         with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
-        # with nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         y = y.view(B, self.nhead, T, -1)
 
@@ -200,6 +172,8 @@ class GPT_Attention(nsd_Module):
         # output projection
         y = self.resid_dropout(self.proj(y))
         return y
+
+
        
 class Attention(nsd_Module):
     def __init__(self, d_model=512, nhead=8, bias=False, dropout=0.1, seq_len=8, cond_prob=1, num_blks=1, kv_heads=0):
@@ -1090,7 +1064,6 @@ class LongTransformer(nsd_Module):
         return self.final_ln(q)
 
 
-
 class GPT_Block(nn.Module):
     def __init__(self, d_model, ffn_dim, nhead, dropout=0.0, bias=False, seq_len=8):
         super().__init__()
@@ -1108,6 +1081,9 @@ class GPT_Block(nn.Module):
         q = q + self.mlp(self.ln_2(q))
         
         return q
+
+    
+
 
 class GPT_Transformer(nsd_Module):
     def __init__(self, d_model, ffn_dim, nhead, num_blks, seq_len,
@@ -1171,12 +1147,6 @@ class GPT_Transformer(nsd_Module):
     def set_cat_attention(self):
         for blk in self.blks:
             blk.attention.set_cat_attention()
-    def set_cache_attention(self):
-        for blk in self.blks:
-            blk.attention.set_cache_attention()
-    def clear_cache(self):
-        for blk in self.blks:
-            blk.attention.clear_cache()
         
     def forward(self, q, k=None, is_causal=True, mask=None):
 
