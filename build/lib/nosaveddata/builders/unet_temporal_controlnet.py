@@ -4,8 +4,10 @@
 
 from .resnet import *
 from .weight_init import *
-from .transformer import  ConvAttnBlock
+from .transformer import  Attention
 from .transformer_llama import *
+from .unet_temporal import *
+from ..nsd_utils.bbf import network_ema
 
 import torch, torchvision
 from torch import nn
@@ -17,7 +19,7 @@ import math
 
 
 class LLaMa_Block_Cross_Self_Attention(nn.Module):
-    def __init__(self, d_model, nhead, seq_len, res, bias=False, dropout=0.1, eps=1e-6):
+    def __init__(self, d_model, nhead, seq_len, res, bias=False, dropout=0, eps=1e-6):
         """
         Initialize a TransformerBlock.
 
@@ -37,6 +39,7 @@ class LLaMa_Block_Cross_Self_Attention(nn.Module):
 
         """
         super().__init__()
+        nhead = d_model//64
         head_dim = d_model // nhead
         self.attention1 = Attention_Rotary_Embedding(d_model, nhead, bias=bias, dropout=dropout)
         self.attention2 = Attention_Rotary_Embedding(d_model, nhead, bias=bias, dropout=dropout)
@@ -68,10 +71,9 @@ class LLaMa_Block_Cross_Self_Attention(nn.Module):
 
         bs, dim, cnn_shape = q.shape[0], q.shape[1], q.shape[2:]
 
-        # print(f"ATTN IS {bs, dim, cnn_shape}")
         q=self.attention_norm1(q.view(bs, dim, -1).transpose(-1,-2))
         
-
+        
         h = q + self.attention1.forward(
             q, q.clone(), q.clone(), self.freqs_cis1, is_causal
         )
@@ -90,9 +92,6 @@ class LLaMa_Block_Cross_Self_Attention(nn.Module):
         return out
 
 
-class Swish(nn.Module):
-    def forward(self, x):
-        return x * torch.sigmoid(x)
 
 
 class CaptionProjection(nn.Module):
@@ -142,44 +141,41 @@ def sinusoidal_embedding(timesteps, embedding_dim):
     return emb  
 
         
-class Residual_Block_T_emb(nn.Module):
-    def __init__(self, in_channels, channels, stride=1, out_act=nn.SiLU(), t_emb_dim=64, dropout=0):
+class Zero_Convolution_T_emb_1D(nn.Module):
+    def __init__(self, in_channels, channels, stride=1, out_act=nn.Mish(), t_emb_dim=64, dropout=0):
         super().__init__()
         
         
         
-        self.conv = nn.Sequential(nn.GroupNorm(32, in_channels) if in_channels%32==0 else nn.BatchNorm2d(in_channels),
-                                  nn.Conv2d(in_channels, channels, kernel_size=3, padding=1, padding_mode='replicate',
+        self.conv = nn.Sequential(nn.BatchNorm1d(in_channels),
+                                  nn.Conv1d(in_channels, channels, kernel_size=3, padding=1, padding_mode='replicate',
                                             stride=stride),
                                   #nn.GroupNorm(channels//8, channels, eps=1e-6),
-                                  nn.SiLU())
+                                  nn.Mish())
         self.t_emb_proj = nn.Sequential(nn.Linear(t_emb_dim, channels))
         self.conv2 = nn.Sequential(nn.Dropout(p=dropout),
-                                  nn.GroupNorm(32, channels) if channels%32==0 else nn.BatchNorm2d(channels),
-                                  nn.Conv2d(channels, channels, kernel_size=3, padding=1, padding_mode='replicate'),
+                                  nn.BatchNorm1d(channels),
+                                  nn.Conv1d(channels, channels, kernel_size=3, padding=1, padding_mode='replicate'),
                                   #nn.GroupNorm(channels//8, channels, eps=1e-6),
                                   out_act,
                                   )
         self.proj=nn.Identity()
         if stride>1 or in_channels!=channels:
-            self.proj = nn.Conv2d(in_channels, channels, kernel_size=1,
+            self.proj = nn.Conv1d(in_channels, channels, kernel_size=1,
                         stride=1, padding=0)
-            self.proj.apply(init_proj2d)
+            #self.proj.apply(init_proj2d)
+            self.proj.apply(init_zeros)
         
 
         self.conv.apply(init_relu)
-        self.conv2.apply(init_relu)
-        if out_act==nn.Sigmoid() or out_act==nn.Identity():
-            self.conv2.apply(init_xavier)
-            
+        self.conv2.apply(init_zeros)
         self.t_emb_proj.apply(init_orth)
         
     def forward(self, X, t_emb):
         Y = self.conv(X)
+        t_emb = self.t_emb_proj(t_emb).view(Y.shape[0], 1, -1)
         
-        t_emb = self.t_emb_proj(t_emb).view(Y.shape[0], -1, 1, 1)
-        
-        Y = self.conv2(Y + t_emb)
+        Y = self.conv2((Y.transpose(-2,-1) + t_emb).transpose(-2,-1))
 
         return Y + self.proj(X)
         
@@ -193,7 +189,7 @@ class Down_ResNet_Blocks(nn.Module):
         self.residuals = nn.ModuleList([])
 
         for i in range(num_blocks):
-            self.residuals.append(Residual_Block_T_emb(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
+            self.residuals.append(Residual_Block_T_emb_1D(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
             in_hid = out_hiddens
 
 
@@ -217,8 +213,8 @@ class Down_Attention_Blocks(nn.Module):
         self.residuals = nn.ModuleList([])
         self.attentions = nn.ModuleList([])
         for i in range(num_blocks):
-            self.residuals.append(Residual_Block_T_emb(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
-            self.attentions.append(ConvAttnBlock(out_hiddens))
+            self.residuals.append(Residual_Block_T_emb_1D(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
+            self.attentions.append(Attention(out_hiddens, num_heads=out_hiddens//64))
             in_hid = out_hiddens
 
 
@@ -226,7 +222,9 @@ class Down_Attention_Blocks(nn.Module):
         residual = ()
         for blk, attn in zip(self.residuals, self.attentions):
             X = blk(X, t_emb)
-            X = attn(X, t_emb)
+            X = X.transpose(-1,-2)
+            X = attn(X, X, X, is_causal=False)
+            X = X.transpose(-1,-2)
             residual = residual + (X,)
         
         return X, residual
@@ -242,7 +240,7 @@ class Down_CrossAttention_Blocks(nn.Module):
         self.attentions = nn.ModuleList([])
 
         for i in range(num_blocks):
-            self.residuals.append(Residual_Block_T_emb(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
+            self.residuals.append(Residual_Block_T_emb_1D(in_hid, out_hiddens, t_emb_dim=t_emb_dim))
             self.attentions.append(LLaMa_Block_Cross_Self_Attention(out_hiddens, nhead=8, seq_len=seq_len, res=res))
             in_hid = out_hiddens
 
@@ -262,7 +260,7 @@ class Down_CrossAttention_Blocks(nn.Module):
 
 
 
-class Up_ResNet_Blocks(nn.Module):
+class Up_ResNet_Blocks_1D_ControlNet(nn.Module):
     def __init__(self, in_hiddens, out_hiddens, prev_out_hiddens, t_emb_dim=64, num_blocks=2, stride=2):
         super().__init__()
 
@@ -274,7 +272,7 @@ class Up_ResNet_Blocks(nn.Module):
             resnet_in_channels = prev_out_hiddens if i == 0 else out_hiddens
 
 
-            self.residuals.append(Residual_Block_T_emb(resnet_in_channels + res_skip_channels, out_hiddens, t_emb_dim=t_emb_dim))
+            self.residuals.append(Zero_Convolution_T_emb_1D(resnet_in_channels + res_skip_channels, out_hiddens, t_emb_dim=t_emb_dim))
             in_hid = out_hiddens
 
 
@@ -284,7 +282,8 @@ class Up_ResNet_Blocks(nn.Module):
         for blk in self.residuals:
             res_hidden = res_sample[-1]
             res_sample = res_sample[:-1]
-            X = torch.cat((X, res_hidden), -3)
+            
+            X = torch.cat((X, res_hidden), -2)
             X = blk(X, t_emb)
         return X
 
@@ -298,9 +297,9 @@ class Up_Attention_Blocks(nn.Module):
         for i in range(num_blocks):
             res_skip_channels = in_hiddens if (i == num_blocks - 1) else out_hiddens
             resnet_in_channels = prev_out_hiddens if i == 0 else out_hiddens
-
-            self.residuals.append(Residual_Block_T_emb(res_skip_channels + resnet_in_channels, out_hiddens, t_emb_dim=t_emb_dim))
-            self.attentions.append(ConvAttnBlock(out_hiddens))
+            
+            self.residuals.append(Residual_Block_T_emb_1D(res_skip_channels + resnet_in_channels, out_hiddens, t_emb_dim=t_emb_dim))
+            self.attentions.append(Attention(out_hiddens, num_heads=out_hiddens//64))
 
 
     def forward(self, X, t_emb, c_emb, res_sample):
@@ -309,11 +308,15 @@ class Up_Attention_Blocks(nn.Module):
             res_hidden = res_sample[-1]
             res_sample = res_sample[:-1]
             
-            X = torch.cat((X, res_hidden), -3)
+            X = torch.cat((X, res_hidden), -2)
             X = blk(X, t_emb)
-            X = attn(X, t_emb)
+
+            X = X.transpose(-1,-2)
+            X = attn(X, X, X, is_causal=False)
+            X = X.transpose(-1,-2)
         
         return X
+
 
 
 class Up_CrossAttention_Blocks(nn.Module):
@@ -328,7 +331,7 @@ class Up_CrossAttention_Blocks(nn.Module):
             res_skip_channels = in_hiddens if (i == num_blocks - 1) else out_hiddens
             resnet_in_channels = prev_out_hiddens if i == 0 else out_hiddens
 
-            self.residuals.append(Residual_Block_T_emb(res_skip_channels + resnet_in_channels, out_hiddens, t_emb_dim=t_emb_dim))
+            self.residuals.append(Residual_Block_T_emb_1D(res_skip_channels + resnet_in_channels, out_hiddens, t_emb_dim=t_emb_dim))
             self.attentions.append(LLaMa_Block_Cross_Self_Attention(out_hiddens, nhead=8, seq_len=seq_len, res=res))
 
         self.condition_proj.apply(init_orth)
@@ -340,7 +343,7 @@ class Up_CrossAttention_Blocks(nn.Module):
             res_hidden = res_sample[-1]
             res_sample = res_sample[:-1]
             
-            X = torch.cat((X, res_hidden), -3)
+            X = torch.cat((X, res_hidden), -2)
             X = blk(X, t_emb)
             X = attn(X, c_emb, c_emb, is_causal=False)
         
@@ -350,19 +353,19 @@ class Up_CrossAttention_Blocks(nn.Module):
 
 
     
-class UNet_Middle(nn.Module):
-    def __init__(self, in_hiddens, out_hiddens, res, t_emb_dim=64, c_emb_dim=64, seq_len=128, num_blocks=1, has_attn=True):
+class UNet_Middle_1D_Controlnet(nn.Module):
+    def __init__(self, in_hiddens, out_hiddens, res, t_emb_dim=64, c_emb_dim=64, seq_len=128, num_blocks=1):
         super().__init__()
         self.condition_proj = nn.Linear(c_emb_dim, out_hiddens)
-        self.has_attn = has_attn
 
-        self.residual1 = Residual_Block_T_emb(in_hiddens, out_hiddens, t_emb_dim=t_emb_dim)
+        self.residual1 = Residual_Block_T_emb_1D(in_hiddens, out_hiddens, t_emb_dim=t_emb_dim)
         self.attentions = nn.ModuleList([])
         self.residuals = nn.ModuleList([])
         for i in range(num_blocks):
-            if has_attn:
-                self.attentions.append(LLaMa_Block_Cross_Self_Attention(out_hiddens, nhead=8, seq_len=seq_len, res=res))
-            self.residuals.append(Residual_Block_T_emb(out_hiddens, in_hiddens, t_emb_dim=t_emb_dim))
+            self.attentions.append(LLaMa_Block_Cross_Self_Attention(out_hiddens, nhead=8, seq_len=seq_len, res=res))
+            self.residuals.append(Residual_Block_T_emb_1D(out_hiddens, out_hiddens, t_emb_dim=t_emb_dim))
+        self.attentions.append(nn.Identity())
+        self.residuals.append(Zero_Convolution_T_emb_1D(out_hiddens, in_hiddens, t_emb_dim=t_emb_dim))
 
         self.condition_proj.apply(init_orth)
 
@@ -371,36 +374,35 @@ class UNet_Middle(nn.Module):
         c_emb = self.condition_proj(c_emb)
 
         for attn, blk in zip(self.attentions,self.residuals):
-            if self.has_attn:
-                X = attn(X, c_emb, c_emb, is_causal=False)
+            X = attn(X, c_emb, c_emb, is_causal=False)
             X = blk(X, t_emb)
-        
         return X
     
 
 
 
-class DownSample2d(nn.Module):
-    def __init__(self, in_channels, out_channels, res, t_emb, c_emb_dim, seq_len, num_blocks=2, stride=2, type='ResNet'):
+class DownSample1d(nn.Module):
+    def __init__(self, in_channels, out_channels, res, t_emb, c_emb_dim, seq_len, num_blocks=2, stride=2, type='ResNet', residual_butterfly=True):
         super().__init__()
-        
+        self.residual_butterfly=residual_butterfly
+
         if type=='ResNet':
-            self.residual = Down_ResNet_Blocks(in_channels, out_channels, t_emb, num_blocks, stride)
+            self.residual = Down_ResNet_Blocks(in_channels, out_channels, t_emb, num_blocks, stride=stride)
         elif type=='Attention':
-            self.residual = Down_Attention_Blocks(in_channels, out_channels, t_emb, num_blocks, stride)
+            self.residual = Down_Attention_Blocks(in_channels, out_channels, t_emb, num_blocks, stride=stride)
         elif type=='CrossAttention':
-            self.residual = Down_CrossAttention_Blocks(in_channels, out_channels, res, t_emb, c_emb_dim, seq_len, num_blocks, stride)
+            self.residual = Down_CrossAttention_Blocks(in_channels, out_channels, res, t_emb, c_emb_dim, seq_len, num_blocks, stride=stride)
         else:
             print(f"Not Implemented Downsampling Type: {type}")
         
         if stride==2:
-            self.downsample = nn.Sequential(nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=1),
+            self.downsample = nn.Sequential(nn.Conv1d(out_channels, out_channels, 3, stride=2, padding=1),
                                #nn.MaxPool2d(3,2, padding=1),
-                               #nn.GroupNorm(32, out_channels) if out_channels%32==0 else nn.BatchNorm2d(out_channels),
-                               #nn.SiLU(),
+                               #nn.GroupNorm(32, out_channels) if out_channels%32==0 else nn.BatchNorm1d(out_channels),
+                               #nn.Mish(),
                                #Residual_Block(out_hiddens, out_hiddens)
                               )
-            self.downsample[0].apply(init_cnn)
+            self.downsample[0].apply(init_orth)
         else:
             self.downsample = None
 
@@ -409,29 +411,33 @@ class DownSample2d(nn.Module):
 
         if self.downsample != None:
             X = self.downsample(X)
+
+        if self.residual_butterfly:
             residual = residual + (X,)
 
         return X, residual
     
 
-class UpSample2d(nn.Module):
+class UpSample1d(nn.Module):
     def __init__(self, in_channels, out_channels, prev_out_hiddens, res, t_emb, c_emb_dim, seq_len, num_blocks=2, stride=2, type='ResNet'):
         super().__init__()
         
-
+        self.residual = Up_ResNet_Blocks_1D_ControlNet(in_channels, out_channels, prev_out_hiddens, t_emb, num_blocks, stride=stride)
+        '''
         if type=='ResNet':
-            self.residual = Up_ResNet_Blocks(in_channels, out_channels, prev_out_hiddens, t_emb, num_blocks, stride)
+            self.residual = Up_ResNet_Blocks_1D_ControlNet(in_channels, out_channels, prev_out_hiddens, t_emb, num_blocks, stride=stride)
         elif type=='Attention':
-            self.residual = Up_Attention_Blocks(in_channels, out_channels, prev_out_hiddens, t_emb, num_blocks, stride)
+            self.residual = Up_Attention_Blocks(in_channels, out_channels, prev_out_hiddens, t_emb, num_blocks, stride=stride)
         elif type=='CrossAttention':
-            self.residual = Up_CrossAttention_Blocks(in_channels, out_channels, prev_out_hiddens, res, t_emb, c_emb_dim, seq_len, num_blocks, stride)
+            self.residual = Up_CrossAttention_Blocks(in_channels, out_channels, prev_out_hiddens, res, t_emb, c_emb_dim, seq_len, num_blocks, stride=stride)
         else:
             print(f"Not Implemented Upsampling Type: {type}")
-        
+        '''
+
         if stride==2:
-            self.upsample = nn.Sequential(nn.UpsamplingNearest2d(scale_factor=2),
-                                          nn.Conv2d(out_channels, out_channels, 3, padding=1))
-            self.upsample[1].apply(init_cnn)
+            self.upsample = nn.Sequential(nn.Upsample(scale_factor=2),
+                                          nn.Conv1d(out_channels, out_channels, 3, padding=1))
+            self.upsample[1].apply(init_orth)
         else:
             self.upsample = nn.Identity()
 
@@ -444,18 +450,21 @@ class UpSample2d(nn.Module):
 
 
 
-class UNet_Conditional(nn.Module):
-    def __init__(self, in_channel=3, out_channel=3, hidden_groups=[16,32,64], strides=[2,2,1], # either 1 or 2
+class UNet_Temporal_Controlnet(nn.Module):
+    def __init__(self, unet, in_channel=3, out_channel=3, hidden_groups=[16,32,64], strides=[2,2,1], # either 1 or 2
                  down_blocks = ['ResNet', 'Attention', 'ResNet'],
                  up_blocks = ['ResNet', 'Attention', 'ResNet'],
                  num_blocks = 2,
                  t_emb=512, c_emb_dim=512,
                  seq_len=128,
-                 res=(64,64), has_attn=True):
+                 res=8):
         super().__init__()
-        assert len(strides)==len(hidden_groups), f'Strides must have one less position than hidden groups, got {len(strides)} and {len(hidden_groups)}'
-        assert len(down_blocks)==len(hidden_groups), f'Blocks must have one less position than hidden groups {len(down_blocks)} and {len(hidden_groups)}'
-        assert len(up_blocks)==len(hidden_groups), f'Blocks must have one less position than hidden groups {len(up_blocks)} and {len(hidden_groups)}'
+        self.unet = unet
+
+        assert len(strides)==len(hidden_groups), f'Strides must have same len as hidden groups, got {len(strides)} and {len(hidden_groups)}'
+        assert len(down_blocks)==len(hidden_groups), f'Down Blocks must have same len as hidden groups: {len(down_blocks)} and {len(hidden_groups)}'
+        assert len(up_blocks)==len(hidden_groups), f'Up Blocks must have same len hidden groups: {len(up_blocks)} and {len(hidden_groups)}'
+        assert all([i==1 for i in strides]) or (all([i==2 for i in strides[:-1]]) and strides[-1]==1)
 
         self.downsample = nn.ModuleList([])
         self.upsample = nn.ModuleList([])
@@ -463,56 +472,89 @@ class UNet_Conditional(nn.Module):
         
         hidden_groups=np.array(hidden_groups)
         
-        self.in_conv = nn.Conv2d(in_channel, hidden_groups[0], 3, padding=1)
-        self.out_conv = nn.Sequential(
-                                      nn.GroupNorm(32, hidden_groups[0]) if hidden_groups[0]%32==0 else nn.BatchNorm2d(hidden_groups[0]),
-                                      nn.SiLU(),
-                                      nn.Conv2d(hidden_groups[0], in_channel, 3, padding=1)
-                                     )
+        self.in_conv = nn.Conv1d(in_channel, hidden_groups[0], 3, padding=1)
         
         out_hidden = hidden_groups[0]
         for i in range(len(hidden_groups)):
             in_hidden = out_hidden
             out_hidden = hidden_groups[i]
-            self.downsample.append(DownSample2d(in_hidden, out_hidden, res, t_emb, c_emb_dim, seq_len, num_blocks, stride=strides[i], type=down_blocks[i]))
-            res = (res[0]//2, res[1]//2) if strides[i]==2 else res
+            self.downsample.append(DownSample1d(in_hidden, out_hidden, res, t_emb, c_emb_dim, seq_len, num_blocks, stride=strides[i], type=down_blocks[i],
+                                                residual_butterfly=( i!=(len(hidden_groups)-1) )))
+            res = res//2 if strides[i]==2 else res
 
         i+=1
-            
-            
+
         
-        self.middle = UNet_Middle(hidden_groups[-1], hidden_groups[-1], res, t_emb, c_emb_dim, seq_len, has_attn=has_attn)
+        
+        self.middle = UNet_Middle(hidden_groups[-1], hidden_groups[-1], res, t_emb, c_emb_dim, seq_len)
         
         hidden_groups = np.flip(hidden_groups,0)
-        #strides.reverse()
+        
         out_hiddens = hidden_groups[0]
         for i in range(0, len(hidden_groups)):
             prev_out_hiddens = out_hiddens
             out_hiddens = hidden_groups[i]
             in_hiddens = hidden_groups[min(i + 1, len(hidden_groups) - 1)]
-            self.upsample.append(UpSample2d(in_hiddens, out_hiddens, prev_out_hiddens, res, t_emb, c_emb_dim, seq_len, num_blocks+1, stride=strides[i], type=up_blocks[i]))
-            res = (res[0]*2, res[1]*2) if strides[i]==2 else res
-        
-        
-    def forward(self, X, t_emb, c_emb):
-        
-        X = self.in_conv(X)
+            self.upsample.append(UpSample1d(in_hiddens, out_hiddens, prev_out_hiddens, res, t_emb, c_emb_dim, seq_len, num_blocks+1, stride=strides[i], type=up_blocks[i]))
+            res = res*2 if strides[i]==2 else res
 
+        
+        self.in_conv.apply(init_orth)
+        self.load_unet()
+        for param in self.unet.parameters():
+            param.requires_grad = False
+
+    def load_unet(self):
+        
+        if self.unet.in_conv.weight.shape == self.in_conv.weight.shape:
+            network_ema(self.in_conv, self.unet.in_conv, 0)
+        
+        for down, down_control in zip(self.unet.downsample, self.downsample):
+            network_ema(down_control, down, 0)
+        
+        for mid_res, mid_res_control in zip(self.unet.middle.residuals, self.middle.residuals[:-1]):
+            network_ema(mid_res_control, mid_res, 0)
+
+        for mid_attn, mid_attn_control in zip(self.unet.middle.attentions, self.middle.attentions[:-1]):
+            network_ema(mid_attn_control, mid_attn, 0)
+
+        for blk_up, blk_up_control in zip(self.unet.upsample, self.upsample):
+            for res_up, res_up_control in zip(blk_up.residual.residuals, blk_up_control.residual.residuals):
+                network_ema(res_up.conv.cuda(), res_up_control.conv.cuda(), 0)
+
+
+    def forward(self, X, t_emb, c_emb, X_control):
+        
+        X_control = self.in_conv(X_control)
+        X = self.unet.in_conv(X)
+
+        residuals_control = [X_control]
         residuals = [X]
 
+
         for i, blk in enumerate(self.downsample):
+            X_control, residual_control = blk(X_control, t_emb, c_emb)
+            residuals_control += residual_control
+
+        for i, blk in enumerate(self.unet.downsample):
             X, residual = blk(X, t_emb, c_emb)
             residuals += residual
-            
-        X = self.middle(X, t_emb, c_emb)
         
-        #residuals.reverse()
-        for i, blk in enumerate(self.upsample):
+            
+        X_control = self.middle(X_control, t_emb, c_emb)
+        X = self.unet.middle(X, t_emb, c_emb) + X_control
+        
+        
+        for i, (blk_control, blk) in enumerate(zip(self.upsample, self.unet.upsample)):
+            res_samples_control = residuals_control[-len(blk_control.residual.residuals) :]
+            residuals_control = residuals_control[: -len(blk_control.residual.residuals)]
+
             res_samples = residuals[-len(blk.residual.residuals) :]
             residuals = residuals[: -len(blk.residual.residuals)]
             
-            X = blk(X, t_emb, c_emb, res_samples)
+            X_control = blk_control(X_control, t_emb, c_emb, res_samples_control)
+            X = blk(X, t_emb, c_emb, res_samples) + X_control
 
-        X = self.out_conv(X)
+        X = self.unet.out_conv(X)
 
         return X
