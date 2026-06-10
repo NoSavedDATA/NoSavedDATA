@@ -382,3 +382,187 @@ class LLaMa_NLP(nn.Module):
 
         return output
 
+class TimestepEmbedding(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.SiLU(),
+            nn.Linear(dim * 4, dim)
+        )
+
+    def forward(self, t):
+        half = self.dim // 2
+
+        freqs = torch.exp(
+            -math.log(10000) *
+            torch.arange(half, device=t.device) / half
+        )
+
+        args = t[:, None].float() * freqs[None]
+
+        emb = torch.cat([
+            torch.cos(args),
+            torch.sin(args)
+        ], dim=-1)
+
+        return self.mlp(emb)
+
+
+class DitFinalLayer(nn.Module):
+    def __init__(self, hidden_size, out_channels, cond_dim, eps=1e-6):
+        super().__init__()
+        self.norm_final= RMSNorm(hidden_size, eps=eps)
+        self.linear = nn.Linear(hidden_size, out_channels)
+        self.linear.weight.data.zero_()
+        self.linear.bias.data.zero_()
+
+        self.adaLN_modulation = nn.Linear(cond_dim, 2 * hidden_size, bias=True)
+        self.adaLN_modulation.weight.data.zero_()
+        self.adaLN_modulation.bias.data.zero_()
+
+    def modulate(self, x, shift, scale):
+        return x * (1 + scale[:,None]) + shift[:,None]
+
+    def forward(self, x, c):
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=-1)
+        x = self.modulate(x=self.norm_final(x), shift=shift, scale=scale)
+        x = self.linear(x)
+
+        return x
+
+class LLaMa_Block_DiT(nn.Module):
+    def __init__(self, layer_id, d_model, ffn, nhead, bias=False, dropout=0.1, eps=1e-6, cross_attention=False):
+        super().__init__()
+        head_dim = d_model // nhead
+        self.attention = Attention_Rotary_Embedding(d_model, nhead, bias=bias, dropout=dropout)
+        self.feed_forward = FFN_LLaMa(
+            dim=d_model,
+            hidden_dim=ffn
+        )
+        self.layer_id = layer_id
+        self.attention_norm = RMSNorm(d_model, eps=eps)
+        self.ffn_norm = RMSNorm(d_model, eps=eps)
+
+        if cross_attention:
+            self.forward = self.forward_cross_attention
+        else:
+            self.forward = self.forward_self_attention
+
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(d_model, 6 * d_model, bias=True)
+        )
+        self.adaLN_modulation.apply(init_zeros)
+        self.adaLN_modulation[1]._skip_init = True
+
+    def modulate(self, x, shift, scale):
+        return x * (1 + scale[:,None]) + shift[:,None]
+    
+    def forward_self_attention(
+        self,
+        q, k, v, c,
+        freqs_cis,
+        is_causal,
+        mask=None
+    ):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=-1)
+        q_ln=self.attention_norm(q)
+        q_ln = self.modulate(q_ln, shift_msa, scale_msa)
+        k=q_ln
+        v=q_ln
+
+        h = q + gate_msa[:,None] * self.attention.forward(
+            q_ln, k, v, freqs_cis, is_causal
+        )
+        out = h + gate_mlp[:,None] * self.feed_forward.forward(self.modulate(self.ffn_norm(h),shift_mlp,scale_mlp))
+        return out
+
+    def forward_cross_attention(
+        self,
+        q, k, v, c,
+        freqs_cis,
+        is_causal,
+        mask=None
+    ):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=-1)
+
+        q_ln=self.attention_norm(q)
+        k=self.attention_norm(k)
+        v=self.attention_norm(v)
+        q_ln = self.modulate(q_ln, shift_msa, scale_msa)
+        k = self.modulate(k, shift_msa, scale_msa)
+        v = self.modulate(v, shift_msa, scale_msa)
+
+        h = q + gate_msa[:,None] * self.attention.forward(
+            q_ln, k, v, freqs_cis, is_causal
+        )
+        out = h + gate_mlp[:,None] * self.feed_forward.forward(self.modulate(self.ffn_norm(h),shift_mlp,scale_mlp))
+        return out
+
+class LLaMa_DiT(nn.Module):
+    def __init__(self, d_model, out_dim, ffn_dim, nhead, num_blks, seq_len, num_timesteps, 
+                  dropout = 0.1, bias=False, eps=1e-6, report_params_count=True, cross_attention=False):
+        super().__init__()
+        self.num_blks = num_blks
+
+        self.ts = TimestepEmbedding(d_model)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(num_blks):
+            self.layers.append(LLaMa_Block_DiT(layer_id, d_model, ffn_dim, nhead, bias, dropout, eps, cross_attention))
+
+        self.norm = RMSNorm(d_model, eps=eps)
+        self.out = DitFinalLayer(d_model, out_dim, d_model)
+
+        self.freqs_cis = precompute_freqs_cis(
+            d_model // nhead, seq_len
+        )
+
+        if report_params_count:
+            params_to_count = [p for p in self.parameters() if p.requires_grad]
+            print(f'LLaMa Transformer Parameters: {sum(p.numel() for p in params_to_count)/1e6:.2f}M')
+
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * num_blks))
+    
+
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            if getattr(module, "_skip_init", False):
+                return
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            #torch.nn.init.xavier_normal_(module.weight)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            #torch.nn.init.xavier_normal_(module.weight)
+    
+    def forward(self, q, k, v, t, causal, mask=None):
+
+
+        _, seqlen, _ = q.shape
+        
+        self.freqs_cis = self.freqs_cis.to(q.device)
+        freqs_cis = self.freqs_cis
+        #freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        c = self.ts(t)
+
+        for layer in self.layers:
+            q = layer(q, k, v, c, freqs_cis, causal, mask)
+            # k=q and v=q if self attention, which is the default option.
+
+        # h = self.norm(q)
+        h = self.out(q, c)
+
+        return h
+
+
