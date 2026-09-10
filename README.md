@@ -1,6 +1,9 @@
-Simply:
+## My Neve Programming Language
+Documentation: [https://neve-lang.dev](https://neve-lang.dev)
+
+Install as
 ```
-pip install .
+wget -qO- https://github.com/NoSavedDATA/Neve/releases/download/neve-bin/install.sh | bash
 ```
 
 <!--
