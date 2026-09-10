@@ -1,4 +1,4 @@
-## My Neve Programming Language
+- My Neve Programming Language
 Documentation: [https://neve-lang.dev](https://neve-lang.dev)
 
 Install as
